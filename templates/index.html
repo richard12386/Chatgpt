@@ -39,10 +39,17 @@
 <body>
   <h1>Yahoo Finance Stock Analyzer</h1>
   <p>Enter a ticker symbol to view current price, last dividend, and weeks with more than 5% movement.</p>
+  <p><em>Note: Yahoo Finance may temporarily rate-limit requests. If that happens, wait a minute and try again.</em></p>
 
   <form method="post">
     <label for="ticker">Ticker Symbol:</label>
     <input id="ticker" type="text" name="ticker" placeholder="e.g. AAPL" required>
+    <label for="period">Range:</label>
+    <select id="period" name="period">
+      {% for value, label in period_options %}
+        <option value="{{ value }}" {% if value == selected_period %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
     <button type="submit">Analyze</button>
   </form>
 
