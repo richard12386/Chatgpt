@@ -74,6 +74,13 @@
           Not available
         {% endif %}
       </p>
+      <p><strong>Company Location:</strong>
+        {% if result.company_city or result.company_state %}
+          {{ result.company_city or "N/A" }}, {{ result.company_state or "N/A" }}
+        {% else %}
+          Not available
+        {% endif %}
+      </p>
     </div>
 
     <h3>Weeks with More Than 5% Price Change</h3>

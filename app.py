@@ -18,6 +18,8 @@ class AnalysisResult:
     current_price: Optional[float]
     last_dividend: Optional[float]
     last_dividend_date: Optional[str]
+    company_city: Optional[str]
+    company_state: Optional[str]
     volatile_weeks: list[dict[str, str]]
 
 
@@ -67,11 +69,24 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y") -> AnalysisResult
         last_dividend = float(dividends.iloc[-1])
         last_dividend_date = dividends.index[-1].strftime("%Y-%m-%d")
 
+    company_city: Optional[str] = None
+    company_state: Optional[str] = None
+    try:
+        info = ticker.info or {}
+        company_city = info.get("city")
+        company_state = info.get("state")
+    except Exception:
+        # Some tickers do not expose profile data consistently.
+        company_city = None
+        company_state = None
+
     return AnalysisResult(
         ticker=ticker_symbol.upper(),
         current_price=current_price,
         last_dividend=last_dividend,
         last_dividend_date=last_dividend_date,
+        company_city=company_city,
+        company_state=company_state,
         volatile_weeks=volatile_weeks,
     )
 
