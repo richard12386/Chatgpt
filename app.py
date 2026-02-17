@@ -37,6 +37,24 @@ def _history_with_retry(
             delay *= 2
 
 
+def _search_symbol_by_name(query: str, retries: int = 3, initial_delay: float = 1.0) -> str:
+    delay = initial_delay
+    for attempt in range(retries):
+        try:
+            search_result = yf.Search(query, max_results=10)
+            quotes = getattr(search_result, "quotes", []) or []
+            for quote in quotes:
+                symbol = quote.get("symbol")
+                if symbol:
+                    return str(symbol).upper()
+            raise ValueError(f"No ticker found for company name '{query}'.")
+        except YFRateLimitError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
+
 def get_stock_analysis(ticker_symbol: str, period: str = "2y") -> AnalysisResult:
     ticker = yf.Ticker(ticker_symbol)
 
@@ -98,21 +116,27 @@ def index():
     selected_period = "2y"
 
     if request.method == "POST":
-        ticker = request.form.get("ticker", "").strip().upper()
+        input_value = request.form.get("ticker", "").strip()
         requested_period = request.form.get("period", "2y")
         selected_period = requested_period if requested_period in dict(PERIOD_OPTIONS) else "2y"
-        if not ticker:
-            error = "Please enter a ticker symbol."
+        if not input_value:
+            error = "Please enter a ticker symbol or company name."
         else:
             try:
-                result = get_stock_analysis(ticker, period=selected_period)
+                # First try as direct ticker input.
+                try:
+                    result = get_stock_analysis(input_value.upper(), period=selected_period)
+                except ValueError:
+                    # If no data for direct ticker, try to resolve by company name.
+                    resolved_ticker = _search_symbol_by_name(input_value)
+                    result = get_stock_analysis(resolved_ticker, period=selected_period)
             except YFRateLimitError:
                 error = (
                     "Yahoo Finance is temporarily rate-limiting requests. "
                     "Please wait a minute and try again."
                 )
             except Exception as exc:
-                error = f"Could not analyze ticker '{ticker}': {exc}"
+                error = f"Could not analyze '{input_value}': {exc}"
 
     return render_template(
         "index.html",
