@@ -60,6 +60,13 @@
   {% if result %}
     <div class="card">
       <h2>{{ result.ticker }}</h2>
+      <p><strong>Company Name:</strong>
+        {% if result.company_name %}
+          {{ result.company_name }}
+        {% else %}
+          Not available
+        {% endif %}
+      </p>
       <p><strong>Current Price:</strong>
         {% if result.current_price is not none %}
           ${{ "%.2f"|format(result.current_price) }}

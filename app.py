@@ -15,6 +15,7 @@ PERIOD_OPTIONS = [("6mo", "6 Months"), ("1y", "1 Year"), ("2y", "2 Years"), ("5y
 @dataclass
 class AnalysisResult:
     ticker: str
+    company_name: Optional[str]
     current_price: Optional[float]
     last_dividend: Optional[float]
     last_dividend_date: Optional[str]
@@ -68,16 +69,20 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y") -> AnalysisResult
         last_dividend = float(dividends.iloc[-1])
         last_dividend_date = dividends.index[-1].strftime("%Y-%m-%d")
 
+    company_name: Optional[str] = None
     company_state: Optional[str] = None
     try:
         info = ticker.info or {}
+        company_name = info.get("longName") or info.get("shortName")
         company_state = info.get("state")
     except Exception:
         # Some tickers do not expose profile data consistently.
+        company_name = None
         company_state = None
 
     return AnalysisResult(
         ticker=ticker_symbol.upper(),
+        company_name=company_name,
         current_price=current_price,
         last_dividend=last_dividend,
         last_dividend_date=last_dividend_date,
