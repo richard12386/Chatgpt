@@ -74,9 +74,9 @@
           Not available
         {% endif %}
       </p>
-      <p><strong>Company Location:</strong>
-        {% if result.company_city or result.company_state %}
-          {{ result.company_city or "N/A" }}, {{ result.company_state or "N/A" }}
+      <p><strong>Company State:</strong>
+        {% if result.company_state %}
+          {{ result.company_state }}
         {% else %}
           Not available
         {% endif %}
