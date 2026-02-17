@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Analyzer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #222;
+    }
+    h1 { margin-bottom: 0.5rem; }
+    form { margin: 1rem 0 2rem; }
+    input[type="text"] { padding: 0.5rem; width: 200px; }
+    button { padding: 0.5rem 0.8rem; }
+    .error { color: #b00020; margin-top: 0.5rem; }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      background: #fafafa;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 0.5rem;
+      text-align: left;
+    }
+    th { background: #f0f0f0; }
+  </style>
+</head>
+<body>
+  <h1>Yahoo Finance Stock Analyzer</h1>
+  <p>Enter a ticker symbol to view current price, last dividend, and weeks with more than 5% movement.</p>
+
+  <form method="post">
+    <label for="ticker">Ticker Symbol:</label>
+    <input id="ticker" type="text" name="ticker" placeholder="e.g. AAPL" required>
+    <button type="submit">Analyze</button>
+  </form>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if result %}
+    <div class="card">
+      <h2>{{ result.ticker }}</h2>
+      <p><strong>Current Price:</strong>
+        {% if result.current_price is not none %}
+          ${{ "%.2f"|format(result.current_price) }}
+        {% else %}
+          Not available
+        {% endif %}
+      </p>
+      <p><strong>Last Dividend:</strong>
+        {% if result.last_dividend is not none %}
+          ${{ "%.4f"|format(result.last_dividend) }} ({{ result.last_dividend_date }})
+        {% else %}
+          Not available
+        {% endif %}
+      </p>
+    </div>
+
+    <h3>Weeks with More Than 5% Price Change</h3>
+    {% if result.volatile_weeks %}
+      <table>
+        <thead>
+          <tr>
+            <th>Week Ending</th>
+            <th>Price Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for week in result.volatile_weeks %}
+            <tr>
+              <td>{{ week.week_end }}</td>
+              <td>{{ week.change_pct }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No weeks with movement greater than 5% in the selected period.</p>
+    {% endif %}
+  {% endif %}
+</body>
+</html>
