@@ -146,6 +146,20 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["status"], "ok")
 
+    @patch("app._analyze_input")
+    @patch("app._latest_cached_result")
+    def test_rate_limit_without_fallback_shows_error(
+        self, latest_cached_mock: Mock, analyze_mock: Mock
+    ):
+        analyze_mock.side_effect = YFRateLimitError()
+        latest_cached_mock.return_value = None
+
+        response = self.client.post("/", data={"ticker": "AAPL", "period": "2y", "threshold": "5"})
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Data could not be loaded right now. Please try again shortly.", body)
+
 
 if __name__ == "__main__":
     unittest.main()
