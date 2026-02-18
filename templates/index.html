@@ -42,6 +42,48 @@
       backdrop-filter: blur(6px);
     }
     .hero { padding: 1.2rem; }
+    .topnav {
+      display: flex;
+      gap: 0.3rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.8rem;
+      border-bottom: 2px solid #0f766e;
+      padding-bottom: 0.35rem;
+    }
+    .topnav a, .topnav button {
+      border: 0;
+      background: transparent;
+      color: #0f172a;
+      text-decoration: none;
+      font-weight: 700;
+      padding: 0.45rem 0.65rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.96rem;
+    }
+    .topnav .active {
+      background: #ecfdf5;
+      color: #065f46;
+    }
+    details.market-dropdown {
+      margin-bottom: 1rem;
+    }
+    details.market-dropdown > summary {
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: #ecfdf5;
+      border: 1px solid #bbf7d0;
+      color: #065f46;
+      border-radius: 10px;
+      padding: 0.5rem 0.7rem;
+      font-weight: 700;
+    }
+    details.market-dropdown > summary::-webkit-details-marker { display: none; }
+    details.market-dropdown[open] > summary { margin-bottom: 0.65rem; }
     .market-board {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -281,7 +323,20 @@
 </head>
 <body>
   <main class="page">
-    <section class="market-board">
+    <nav class="topnav" aria-label="Primary">
+      <a href="#" aria-disabled="true">My Portfolio</a>
+      <a href="#" aria-disabled="true">News</a>
+      <button type="button" class="active" onclick="const d=document.getElementById('markets-panel'); d.open=!d.open;">Markets</button>
+      <a href="#" aria-disabled="true">Research</a>
+      <a href="#" aria-disabled="true">Community</a>
+      <a href="#" aria-disabled="true">Personal Finance</a>
+      <a href="#" aria-disabled="true">Videos</a>
+      <a href="#" aria-disabled="true">Watch Now</a>
+    </nav>
+
+    <details id="markets-panel" class="market-dropdown">
+      <summary>Show Global Market Movers</summary>
+      <section class="market-board">
       <article class="market-card">
         <h3>TOP 10 Most Active Buys</h3>
         <ul class="market-list">
@@ -347,7 +402,8 @@
           {% if not market.recommendations %}<li class="market-item">No live data</li>{% endif %}
         </ul>
       </article>
-    </section>
+      </section>
+    </details>
 
     <section class="hero">
       <h1>Yahoo Finance Stock Analyzer</h1>

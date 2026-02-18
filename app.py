@@ -7,10 +7,13 @@ import io
 import math
 import os
 import random
+import re
 import time
 from typing import Optional
 
+import requests
 import yfinance as yf
+from bs4 import BeautifulSoup
 from flask import Flask, jsonify, make_response, render_template, request
 from yfinance.exceptions import YFRateLimitError
 
@@ -25,6 +28,14 @@ MAX_RECENT_SEARCHES = 8
 
 ANALYSIS_CACHE: dict[tuple[str, str, int], tuple[float, "AnalysisResult"]] = {}
 RECENT_SEARCHES: deque[dict[str, str]] = deque(maxlen=MAX_RECENT_SEARCHES)
+LAST_MARKET_OVERVIEW: Optional[dict] = None
+
+# Global-ish liquid tickers (US + EU + Asia) in Yahoo symbol format.
+MARKET_URLS = {
+    "most_active": "https://finance.yahoo.com/markets/stocks/most-active/",
+    "gainers": "https://finance.yahoo.com/markets/stocks/gainers/",
+    "losers": "https://finance.yahoo.com/markets/stocks/losers/",
+}
 
 
 @dataclass
@@ -58,6 +69,96 @@ def _fetch_screen_live(query_name: str, size: int = 25, retries: int = 3) -> lis
             delay *= 1.8
         except Exception:
             return []
+    return []
+
+
+def _fetch_quote_batch(symbols: list[str], retries: int = 3) -> list[dict]:
+    if not symbols:
+        return []
+
+    url = "https://query1.finance.yahoo.com/v7/finance/quote"
+    delay = 0.7
+    for attempt in range(retries):
+        try:
+            response = requests.get(
+                url,
+                params={"symbols": ",".join(symbols)},
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return payload.get("quoteResponse", {}).get("result", [])
+        except Exception:
+            if attempt == retries - 1:
+                return []
+            time.sleep(delay + random.uniform(0.0, 0.25))
+            delay *= 1.8
+    return []
+
+
+def _to_number_with_suffix(raw_value: str) -> float:
+    raw = (raw_value or "").replace(",", "").strip()
+    match = re.match(r"^([+-]?\d+(?:\.\d+)?)([KMBT]?)$", raw, re.IGNORECASE)
+    if not match:
+        return 0.0
+    value = float(match.group(1))
+    suffix = match.group(2).upper()
+    if suffix == "K":
+        return value * 1_000
+    if suffix == "M":
+        return value * 1_000_000
+    if suffix == "B":
+        return value * 1_000_000_000
+    if suffix == "T":
+        return value * 1_000_000_000_000
+    return value
+
+
+def _extract_first_float(raw_value: str) -> Optional[float]:
+    match = re.search(r"[+-]?\d+(?:\.\d+)?", raw_value or "")
+    return float(match.group(0)) if match else None
+
+
+def _extract_change_pct(raw_value: str) -> Optional[float]:
+    match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*%", raw_value or "")
+    return float(match.group(1)) if match else None
+
+
+def _scrape_market_table(url: str, retries: int = 3) -> list[dict]:
+    delay = 0.8
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            table = soup.find("table")
+            if not table:
+                return []
+            rows = []
+            for tr in table.find_all("tr")[1:]:
+                cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+                if len(cells) < 8:
+                    continue
+                symbol = cells[0]
+                change_pct = _extract_change_pct(cells[5])
+                row = {
+                    "symbol": symbol,
+                    "name": cells[1] or symbol,
+                    "price": _extract_first_float(cells[3]),
+                    "change_pct": change_pct,
+                    "volume": int(_to_number_with_suffix(cells[6])),
+                    "exchange": None,
+                    "currency": None,
+                    "market_cap": _to_number_with_suffix(cells[8]),
+                }
+                rows.append(row)
+            return rows
+        except Exception:
+            if attempt == retries - 1:
+                return []
+            time.sleep(delay + random.uniform(0.0, 0.3))
+            delay *= 1.8
     return []
 
 
@@ -102,6 +203,8 @@ def _build_recommendations(buys: list[dict], gainers: list[dict], count: int = 5
 
 
 def get_market_overview_live() -> dict:
+    global LAST_MARKET_OVERVIEW
+
     if app.config.get("TESTING"):
         return {
             "active_buys": [],
@@ -111,13 +214,19 @@ def get_market_overview_live() -> dict:
             "recommendations": [],
         }
 
-    actives_raw = _fetch_screen_live("most_actives", size=40)
-    gainers_raw = _fetch_screen_live("day_gainers", size=25)
-    losers_raw = _fetch_screen_live("day_losers", size=25)
+    # Live on every load: scrape Yahoo market pages directly (works even when quote/screener APIs are limited).
+    actives_rows = _scrape_market_table(MARKET_URLS["most_active"])
+    gainers_rows = _scrape_market_table(MARKET_URLS["gainers"])
+    losers_rows = _scrape_market_table(MARKET_URLS["losers"])
 
-    actives_rows = [row for row in (_to_market_row(q) for q in actives_raw) if row is not None]
-    gainers_rows = [row for row in (_to_market_row(q) for q in gainers_raw) if row is not None]
-    losers_rows = [row for row in (_to_market_row(q) for q in losers_raw) if row is not None]
+    if not actives_rows and not gainers_rows and not losers_rows:
+        # Last-resort fallback to yfinance screen.
+        actives_raw = _fetch_screen_live("most_actives", size=40)
+        gainers_raw = _fetch_screen_live("day_gainers", size=25)
+        losers_raw = _fetch_screen_live("day_losers", size=25)
+        actives_rows = [row for row in (_to_market_row(q) for q in actives_raw) if row is not None]
+        gainers_rows = [row for row in (_to_market_row(q) for q in gainers_raw) if row is not None]
+        losers_rows = [row for row in (_to_market_row(q) for q in losers_raw) if row is not None]
 
     active_buys = [r for r in actives_rows if (r.get("change_pct") or 0) > 0]
     active_sells = [r for r in actives_rows if (r.get("change_pct") or 0) < 0]
@@ -133,13 +242,21 @@ def get_market_overview_live() -> dict:
     top_losers = losers_rows[:10]
     recommendations = _build_recommendations(top_active_buys, top_gainers, count=5)
 
-    return {
+    overview = {
         "active_buys": top_active_buys,
         "active_sells": top_active_sells,
         "gainers": top_gainers,
         "losers": top_losers,
         "recommendations": recommendations,
     }
+
+    has_any = any(overview[k] for k in ("active_buys", "active_sells", "gainers", "losers", "recommendations"))
+    if has_any:
+        LAST_MARKET_OVERVIEW = overview
+        return overview
+    if LAST_MARKET_OVERVIEW is not None:
+        return LAST_MARKET_OVERVIEW
+    return overview
 
 
 def _history_with_retry(
