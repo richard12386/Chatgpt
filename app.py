@@ -503,7 +503,6 @@ def _export_csv_response(result: AnalysisResult, query: str) -> tuple[str, int]:
 def index():
     result: Optional[AnalysisResult] = None
     error: Optional[str] = None
-    market = get_market_overview_live()
 
     input_value = ""
     selected_period = "2y"
@@ -540,7 +539,6 @@ def index():
 
     return render_template(
         "index.html",
-        market=market,
         result=result,
         error=error,
         period_options=PERIOD_OPTIONS,
@@ -550,6 +548,12 @@ def index():
         input_value=input_value,
         recent_searches=list(RECENT_SEARCHES),
     )
+
+
+@app.get("/markets")
+def markets():
+    market = get_market_overview_live()
+    return render_template("markets.html", market=market)
 
 
 @app.get("/export.csv")

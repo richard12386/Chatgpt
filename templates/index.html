@@ -34,6 +34,21 @@
       padding: 2rem 1rem 3rem;
       animation: fade-slide 420ms ease-out both;
     }
+    .topnav {
+      margin-bottom: 0.8rem;
+      border-bottom: 2px solid #0f766e;
+      padding-bottom: 0.35rem;
+    }
+    .topnav a {
+      border: 0;
+      color: #065f46;
+      background: #ecfdf5;
+      text-decoration: none;
+      font-weight: 800;
+      padding: 0.45rem 0.7rem;
+      border-radius: 8px;
+      display: inline-block;
+    }
     .hero, .card {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -42,95 +57,6 @@
       backdrop-filter: blur(6px);
     }
     .hero { padding: 1.2rem; }
-    .topnav {
-      display: flex;
-      gap: 0.3rem;
-      flex-wrap: wrap;
-      margin-bottom: 0.8rem;
-      border-bottom: 2px solid #0f766e;
-      padding-bottom: 0.35rem;
-    }
-    .topnav a, .topnav button {
-      border: 0;
-      background: transparent;
-      color: #0f172a;
-      text-decoration: none;
-      font-weight: 700;
-      padding: 0.45rem 0.65rem;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 0.96rem;
-    }
-    .topnav .active {
-      background: #ecfdf5;
-      color: #065f46;
-    }
-    details.market-dropdown {
-      margin-bottom: 1rem;
-    }
-    details.market-dropdown > summary {
-      list-style: none;
-      cursor: pointer;
-      user-select: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      background: #ecfdf5;
-      border: 1px solid #bbf7d0;
-      color: #065f46;
-      border-radius: 10px;
-      padding: 0.5rem 0.7rem;
-      font-weight: 700;
-    }
-    details.market-dropdown > summary::-webkit-details-marker { display: none; }
-    details.market-dropdown[open] > summary { margin-bottom: 0.65rem; }
-    .market-board {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 0.8rem;
-      margin-bottom: 1rem;
-    }
-    .market-card {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      box-shadow: 0 8px 20px rgba(22, 32, 41, 0.06);
-      padding: 0.7rem;
-    }
-    .market-card h3 {
-      margin: 0 0 0.45rem;
-      font-size: 0.9rem;
-      letter-spacing: 0.02em;
-    }
-    .market-list {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      gap: 0.28rem;
-      max-height: 260px;
-      overflow: auto;
-    }
-    .market-item {
-      display: grid;
-      grid-template-columns: 1fr auto auto;
-      gap: 0.45rem;
-      align-items: center;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 0.33rem 0.45rem;
-      background: #fff;
-      font-size: 0.82rem;
-    }
-    .market-item .sym { font-weight: 800; }
-    .market-item .nm {
-      color: var(--muted);
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-    .market-item .meta { font-weight: 700; font-size: 0.8rem; }
-    .rec-card { grid-column: span 3; }
     h1 {
       margin: 0 0 0.35rem;
       letter-spacing: 0.02em;
@@ -164,7 +90,7 @@
       font-size: 0.98rem;
       color: var(--ink);
     }
-    button, .link-btn {
+    button {
       border: 0;
       border-radius: 12px;
       background: linear-gradient(135deg, var(--accent), #0a9396);
@@ -172,11 +98,9 @@
       font-weight: 700;
       padding: 0.74rem 1rem;
       cursor: pointer;
-      text-decoration: none;
-      display: inline-block;
       transition: transform 140ms ease;
     }
-    button:hover, .link-btn:hover { transform: translateY(-1px); }
+    button:hover { transform: translateY(-1px); }
     .error {
       margin-top: 1rem;
       color: var(--danger);
@@ -306,15 +230,11 @@
       to { opacity: 1; transform: translateY(0); }
     }
     @media (max-width: 880px) {
-      .market-board { grid-template-columns: 1fr 1fr; }
-      .rec-card { grid-column: span 2; }
       form { grid-template-columns: 1fr 1fr; }
       .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 620px) {
       .page { padding: 1rem 0.75rem 2rem; }
-      .market-board { grid-template-columns: 1fr; }
-      .rec-card { grid-column: span 1; }
       form { grid-template-columns: 1fr; }
       .stat-grid { grid-template-columns: 1fr; }
       .chart-wrap { height: 280px; }
@@ -324,86 +244,8 @@
 <body>
   <main class="page">
     <nav class="topnav" aria-label="Primary">
-      <a href="#" aria-disabled="true">My Portfolio</a>
-      <a href="#" aria-disabled="true">News</a>
-      <button type="button" class="active" onclick="const d=document.getElementById('markets-panel'); d.open=!d.open;">Markets</button>
-      <a href="#" aria-disabled="true">Research</a>
-      <a href="#" aria-disabled="true">Community</a>
-      <a href="#" aria-disabled="true">Personal Finance</a>
-      <a href="#" aria-disabled="true">Videos</a>
-      <a href="#" aria-disabled="true">Watch Now</a>
+      <a href="/markets">Markets</a>
     </nav>
-
-    <details id="markets-panel" class="market-dropdown">
-      <summary>Show Global Market Movers</summary>
-      <section class="market-board">
-      <article class="market-card">
-        <h3>TOP 10 Most Active Buys</h3>
-        <ul class="market-list">
-          {% for row in market.active_buys %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{{ "{:,}".format(row.volume) }}</span>
-            </li>
-          {% endfor %}
-          {% if not market.active_buys %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
-      </article>
-      <article class="market-card">
-        <h3>TOP 10 Most Active Sells</h3>
-        <ul class="market-list">
-          {% for row in market.active_sells %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{{ "{:,}".format(row.volume) }}</span>
-            </li>
-          {% endfor %}
-          {% if not market.active_sells %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
-      </article>
-      <article class="market-card">
-        <h3>TOP 10 Gainers</h3>
-        <ul class="market-list">
-          {% for row in market.gainers %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{% if row.price is not none %}{{ "%.2f"|format(row.price) }}{% else %}N/A{% endif %}</span>
-            </li>
-          {% endfor %}
-          {% if not market.gainers %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
-      </article>
-      <article class="market-card">
-        <h3>TOP 10 Losers</h3>
-        <ul class="market-list">
-          {% for row in market.losers %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{% if row.price is not none %}{{ "%.2f"|format(row.price) }}{% else %}N/A{% endif %}</span>
-            </li>
-          {% endfor %}
-          {% if not market.losers %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
-      </article>
-      <article class="market-card rec-card">
-        <h3>5 Recommendations to Buy Stocks</h3>
-        <ul class="market-list">
-          {% for row in market.recommendations %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">Score {{ "%.3f"|format(row.score) }}</span>
-            </li>
-          {% endfor %}
-          {% if not market.recommendations %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
-      </article>
-      </section>
-    </details>
 
     <section class="hero">
       <h1>Yahoo Finance Stock Analyzer</h1>
