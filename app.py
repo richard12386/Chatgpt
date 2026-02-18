@@ -9,6 +9,7 @@ import os
 import random
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -30,12 +31,15 @@ PERIOD_OPTIONS = [
     ("5y", "5Y"),
     ("max", "All"),
 ]
-THRESHOLD_OPTIONS = [5, 8, 13, 21, 34, 55]
+DAY_THRESHOLD_OPTIONS = [3, 5, 8, 13, 21, 34, 55]
+WEEK_THRESHOLD_OPTIONS = [3, 5, 8, 13, 21, 34, 55]
+THRESHOLD_OPTIONS = WEEK_THRESHOLD_OPTIONS
+GRANULARITY_OPTIONS = [("week", "Week End"), ("day", "Every Day")]
 CACHE_TTL_SECONDS = 900
 STALE_CACHE_MAX_AGE_SECONDS = 21600
 MAX_RECENT_SEARCHES = 8
 
-ANALYSIS_CACHE: dict[tuple[str, str, int], tuple[float, "AnalysisResult"]] = {}
+ANALYSIS_CACHE: dict[tuple[str, str, int, str], tuple[float, "AnalysisResult"]] = {}
 RECENT_SEARCHES: deque[dict[str, str]] = deque(maxlen=MAX_RECENT_SEARCHES)
 LAST_MARKET_OVERVIEW: Optional[dict] = None
 
@@ -44,6 +48,21 @@ MARKET_URLS = {
     "most_active": "https://finance.yahoo.com/markets/stocks/most-active/",
     "gainers": "https://finance.yahoo.com/markets/stocks/gainers/",
     "losers": "https://finance.yahoo.com/markets/stocks/losers/",
+}
+FINVIZ_URLS = {
+    "most_active": "https://finviz.com/screener.ashx?v=111&s=ta_mostactive",
+    "gainers": "https://finviz.com/screener.ashx?v=111&s=ta_topgainers",
+    "losers": "https://finviz.com/screener.ashx?v=111&s=ta_toplosers",
+}
+TRADINGVIEW_URLS = {
+    "most_active": "https://www.tradingview.com/markets/stocks-usa/market-movers-active/",
+    "gainers": "https://www.tradingview.com/markets/stocks-usa/market-movers-gainers/",
+    "losers": "https://www.tradingview.com/markets/stocks-usa/market-movers-losers/",
+}
+GOOGLE_FINANCE_URLS = {
+    "most_active": "https://www.google.com/finance/markets/most-active",
+    "gainers": "https://www.google.com/finance/markets/gainers",
+    "losers": "https://www.google.com/finance/markets/losers",
 }
 
 
@@ -63,6 +82,7 @@ class AnalysisResult:
     volatility_week_count: int
     max_weekly_gain_pct: Optional[float]
     max_weekly_loss_pct: Optional[float]
+    granularity: str
 
 
 def _fetch_screen_live(query_name: str, size: int = 25, retries: int = 3) -> list[dict]:
@@ -106,6 +126,41 @@ def _fetch_quote_batch(symbols: list[str], retries: int = 3) -> list[dict]:
     return []
 
 
+def _request_json_with_retry(url: str, params: dict, retries: int = 4, timeout: int = 12) -> dict:
+    delay = 0.8
+    last_exc: Optional[Exception] = None
+    for attempt in range(retries):
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            last_exc = exc
+            if attempt == retries - 1:
+                break
+            time.sleep(delay + random.uniform(0.0, 0.3))
+            delay *= 1.8
+    raise RuntimeError("Yahoo endpoint request failed.") from last_exc
+
+
+def _search_symbol_by_name_http(query: str) -> str:
+    payload = _request_json_with_retry(
+        "https://query2.finance.yahoo.com/v1/finance/search",
+        {"q": query, "quotesCount": 10, "newsCount": 0},
+    )
+    quotes = payload.get("quotes", []) if isinstance(payload, dict) else []
+    for quote in quotes:
+        symbol = quote.get("symbol")
+        if symbol:
+            return str(symbol).upper()
+    raise ValueError(f"No ticker found for company name '{query}'.")
+
+
 def _to_number_with_suffix(raw_value: str) -> float:
     raw = (raw_value or "").replace(",", "").strip()
     match = re.match(r"^([+-]?\d+(?:\.\d+)?)([KMBT]?)$", raw, re.IGNORECASE)
@@ -134,11 +189,17 @@ def _extract_change_pct(raw_value: str) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
-def _scrape_market_table(url: str, retries: int = 3) -> list[dict]:
+def _normalize_symbol(raw_symbol: str) -> str:
+    symbol = (raw_symbol or "").strip().upper()
+    symbol = re.sub(r"[^A-Z0-9\.\-:]", "", symbol)
+    return symbol
+
+
+def _scrape_market_table(url: str, retries: int = 1) -> list[dict]:
     delay = 0.8
     for attempt in range(retries):
         try:
-            response = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            response = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
             table = soup.find("table")
@@ -160,6 +221,7 @@ def _scrape_market_table(url: str, retries: int = 3) -> list[dict]:
                     "exchange": None,
                     "currency": None,
                     "market_cap": _to_number_with_suffix(cells[8]),
+                    "source": "yahoo",
                 }
                 rows.append(row)
             return rows
@@ -169,6 +231,168 @@ def _scrape_market_table(url: str, retries: int = 3) -> list[dict]:
             time.sleep(delay + random.uniform(0.0, 0.3))
             delay *= 1.8
     return []
+
+
+def _scrape_finviz_table(url: str, retries: int = 1) -> list[dict]:
+    delay = 0.8
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            table = soup.select_one("table.screener_table")
+            if not table:
+                return []
+
+            rows: list[dict] = []
+            for tr in table.find_all("tr")[1:]:
+                cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+                if len(cells) < 11:
+                    continue
+                symbol = _normalize_symbol(cells[1])
+                if not symbol:
+                    continue
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "name": cells[2] or symbol,
+                        "price": _extract_first_float(cells[8]),
+                        "change_pct": _extract_change_pct(cells[9]),
+                        "volume": int(_to_number_with_suffix(cells[10])),
+                        "exchange": None,
+                        "currency": None,
+                        "market_cap": _to_number_with_suffix(cells[6]),
+                        "source": "finviz",
+                    }
+                )
+            return rows
+        except Exception:
+            if attempt == retries - 1:
+                return []
+            time.sleep(delay + random.uniform(0.0, 0.3))
+            delay *= 1.8
+    return []
+
+
+def _scrape_tradingview_table(url: str, retries: int = 1) -> list[dict]:
+    delay = 0.8
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            table = soup.find("table")
+            if not table:
+                return []
+
+            rows: list[dict] = []
+            for tr in table.find_all("tr")[1:]:
+                cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+                if len(cells) < 6:
+                    continue
+
+                symbol_and_name = cells[0].split(" ", 1)
+                symbol = _normalize_symbol(symbol_and_name[0])
+                if not symbol:
+                    continue
+                name = symbol_and_name[1].strip() if len(symbol_and_name) > 1 else symbol
+
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "name": name,
+                        "price": _extract_first_float(cells[2] if len(cells) > 2 else ""),
+                        "change_pct": _extract_change_pct(cells[1] if len(cells) > 1 else ""),
+                        "volume": int(_to_number_with_suffix(cells[3] if len(cells) > 3 else "0")),
+                        "exchange": None,
+                        "currency": "USD",
+                        "market_cap": _to_number_with_suffix(cells[5] if len(cells) > 5 else "0"),
+                        "source": "tradingview",
+                    }
+                )
+            return rows
+        except Exception:
+            if attempt == retries - 1:
+                return []
+            time.sleep(delay + random.uniform(0.0, 0.3))
+            delay *= 1.8
+    return []
+
+
+def _scrape_google_finance_table(url: str, retries: int = 1) -> list[dict]:
+    delay = 0.8
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            title = soup.title.get_text(strip=True) if soup.title else ""
+            if "Before you continue" in title:
+                return []
+
+            table = soup.find("table")
+            if not table:
+                return []
+
+            rows: list[dict] = []
+            for tr in table.find_all("tr")[1:]:
+                cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+                if len(cells) < 4:
+                    continue
+                symbol = _normalize_symbol(cells[0].split(" ", 1)[0])
+                if not symbol:
+                    continue
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "name": cells[0],
+                        "price": _extract_first_float(cells[1] if len(cells) > 1 else ""),
+                        "change_pct": _extract_change_pct(cells[2] if len(cells) > 2 else ""),
+                        "volume": int(_to_number_with_suffix(cells[3] if len(cells) > 3 else "0")),
+                        "exchange": None,
+                        "currency": None,
+                        "market_cap": 0.0,
+                        "source": "google_finance",
+                    }
+                )
+            return rows
+        except Exception:
+            if attempt == retries - 1:
+                return []
+            time.sleep(delay + random.uniform(0.0, 0.3))
+            delay *= 1.8
+    return []
+
+
+def _merge_market_rows(*sources: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for rows in sources:
+        for row in rows:
+            symbol = _normalize_symbol(str(row.get("symbol", "")))
+            if not symbol:
+                continue
+            existing = merged.get(symbol)
+            if existing is None:
+                merged[symbol] = dict(row, symbol=symbol)
+                continue
+
+            if not existing.get("name") and row.get("name"):
+                existing["name"] = row.get("name")
+            if existing.get("price") is None and row.get("price") is not None:
+                existing["price"] = row.get("price")
+            if existing.get("change_pct") is None and row.get("change_pct") is not None:
+                existing["change_pct"] = row.get("change_pct")
+            if (row.get("volume") or 0) > (existing.get("volume") or 0):
+                existing["volume"] = row.get("volume")
+            if (row.get("market_cap") or 0) > (existing.get("market_cap") or 0):
+                existing["market_cap"] = row.get("market_cap")
+            if not existing.get("exchange") and row.get("exchange"):
+                existing["exchange"] = row.get("exchange")
+            if not existing.get("currency") and row.get("currency"):
+                existing["currency"] = row.get("currency")
+            if existing.get("source") and row.get("source") and row["source"] not in existing["source"]:
+                existing["source"] = f"{existing['source']},{row['source']}"
+    return list(merged.values())
 
 
 def _to_market_row(quote: dict) -> Optional[dict]:
@@ -184,6 +408,7 @@ def _to_market_row(quote: dict) -> Optional[dict]:
         "exchange": quote.get("exchange") or quote.get("fullExchangeName"),
         "currency": quote.get("currency"),
         "market_cap": quote.get("marketCap") or 0,
+        "source": "yahoo",
     }
 
 
@@ -223,10 +448,27 @@ def get_market_overview_live() -> dict:
             "recommendations": [],
         }
 
-    # Live on every load: scrape Yahoo market pages directly (works even when quote/screener APIs are limited).
-    actives_rows = _scrape_market_table(MARKET_URLS["most_active"])
-    gainers_rows = _scrape_market_table(MARKET_URLS["gainers"])
-    losers_rows = _scrape_market_table(MARKET_URLS["losers"])
+    # Live on every load from multiple providers:
+    # Yahoo Finance + Finviz + TradingView + Google Finance.
+    yahoo_actives = _scrape_market_table(MARKET_URLS["most_active"])
+    yahoo_gainers = _scrape_market_table(MARKET_URLS["gainers"])
+    yahoo_losers = _scrape_market_table(MARKET_URLS["losers"])
+
+    finviz_actives = _scrape_finviz_table(FINVIZ_URLS["most_active"])
+    finviz_gainers = _scrape_finviz_table(FINVIZ_URLS["gainers"])
+    finviz_losers = _scrape_finviz_table(FINVIZ_URLS["losers"])
+
+    tv_actives = _scrape_tradingview_table(TRADINGVIEW_URLS["most_active"])
+    tv_gainers = _scrape_tradingview_table(TRADINGVIEW_URLS["gainers"])
+    tv_losers = _scrape_tradingview_table(TRADINGVIEW_URLS["losers"])
+
+    gf_actives = _scrape_google_finance_table(GOOGLE_FINANCE_URLS["most_active"])
+    gf_gainers = _scrape_google_finance_table(GOOGLE_FINANCE_URLS["gainers"])
+    gf_losers = _scrape_google_finance_table(GOOGLE_FINANCE_URLS["losers"])
+
+    actives_rows = _merge_market_rows(yahoo_actives, finviz_actives, tv_actives, gf_actives)
+    gainers_rows = _merge_market_rows(yahoo_gainers, finviz_gainers, tv_gainers, gf_gainers)
+    losers_rows = _merge_market_rows(yahoo_losers, finviz_losers, tv_losers, gf_losers)
 
     if not actives_rows and not gainers_rows and not losers_rows:
         # Last-resort fallback to yfinance screen.
@@ -269,12 +511,16 @@ def get_market_overview_live() -> dict:
 
 
 def _history_with_retry(
-    ticker: yf.Ticker, period: str, retries: int = 5, initial_delay: float = 1.2
+    ticker: yf.Ticker,
+    period: str,
+    interval: str = "1d",
+    retries: int = 5,
+    initial_delay: float = 1.2,
 ):
     delay = initial_delay
     for attempt in range(retries):
         try:
-            return ticker.history(period=period, auto_adjust=False)
+            return ticker.history(period=period, interval=interval, auto_adjust=False)
         except YFRateLimitError:
             if attempt == retries - 1:
                 raise
@@ -295,7 +541,7 @@ def _search_symbol_by_name(query: str, retries: int = 5, initial_delay: float = 
             raise ValueError(f"No ticker found for company name '{query}'.")
         except YFRateLimitError:
             if attempt == retries - 1:
-                raise
+                return _search_symbol_by_name_http(query)
             time.sleep(delay + random.uniform(0.0, 0.4))
             delay *= 2
 
@@ -306,20 +552,37 @@ def _normalize_period(requested_period: str) -> str:
     return requested_period if requested_period in valid_values else "1y"
 
 
-def _normalize_threshold(requested_threshold: str) -> int:
+def _threshold_options_for_granularity(granularity: str) -> list[int]:
+    return WEEK_THRESHOLD_OPTIONS if granularity == "week" else DAY_THRESHOLD_OPTIONS
+
+
+def _normalize_threshold(requested_threshold: str, granularity: str = "week") -> int:
+    valid_thresholds = _threshold_options_for_granularity(granularity)
     try:
         threshold = int(requested_threshold)
     except (TypeError, ValueError):
         return 5
-    return threshold if threshold in THRESHOLD_OPTIONS else 5
+    return threshold if threshold in valid_thresholds else 5
 
 
-def _record_recent_search(query: str, ticker: str, period: str, threshold_pct: int):
+def _normalize_granularity(requested_granularity: str) -> str:
+    valid_values = {value for value, _ in GRANULARITY_OPTIONS}
+    return requested_granularity if requested_granularity in valid_values else "week"
+
+
+def _history_interval(period: str, granularity: str) -> str:
+    if granularity == "day" and period == "1d":
+        return "60m"
+    return "1d"
+
+
+def _record_recent_search(query: str, ticker: str, period: str, threshold_pct: int, granularity: str):
     entry = {
         "query": query,
         "ticker": ticker,
         "period": period,
         "threshold": str(threshold_pct),
+        "granularity": granularity,
         "timestamp": time.strftime("%H:%M:%S"),
     }
 
@@ -329,6 +592,7 @@ def _record_recent_search(query: str, ticker: str, period: str, threshold_pct: i
             and x["ticker"] == ticker
             and x["period"] == period
             and x["threshold"] == str(threshold_pct)
+            and x.get("granularity", "week") == granularity
         )),
         maxlen=MAX_RECENT_SEARCHES,
     )
@@ -347,30 +611,198 @@ def _latest_cached_result() -> Optional["AnalysisResult"]:
     return None
 
 
-def get_stock_analysis(ticker_symbol: str, period: str = "2y", threshold_pct: int = 5) -> AnalysisResult:
-    ticker = yf.Ticker(ticker_symbol)
+def _week_end_friday(day: datetime) -> datetime:
+    offset = (4 - day.weekday()) % 7
+    return day + timedelta(days=offset)
 
-    price_history = _history_with_retry(ticker, period=period)
+
+def get_stock_analysis_http(
+    ticker_symbol: str, period: str = "1y", threshold_pct: int = 5, granularity: str = "week"
+) -> AnalysisResult:
+    interval = _history_interval(period, granularity)
+    quote_row: dict = {}
+    try:
+        quote_payload = _request_json_with_retry(
+            "https://query1.finance.yahoo.com/v7/finance/quote",
+            {"symbols": ticker_symbol},
+        )
+        quote_rows = ((quote_payload.get("quoteResponse") or {}).get("result")) or []
+        quote_row = quote_rows[0] if quote_rows else {}
+    except Exception:
+        quote_row = {}
+
+    chart: list[dict] = []
+    try:
+        chart_payload = _request_json_with_retry(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker_symbol}",
+            {
+                "range": period,
+                "interval": interval,
+                "events": "div,splits",
+                "includePrePost": "false",
+            },
+        )
+        chart = (chart_payload.get("chart") or {}).get("result") or []
+    except Exception:
+        chart = []
+
+    result0 = chart[0] if chart else {}
+    timestamps = result0.get("timestamp") or []
+    quote0 = (((result0.get("indicators") or {}).get("quote") or [{}])[0]) or {}
+    closes = quote0.get("close") or []
+
+    raw_points: list[tuple[datetime, float]] = []
+    for ts, close in zip(timestamps, closes):
+        if close is None:
+            continue
+        day = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        raw_points.append((day, float(close)))
+    raw_points.sort(key=lambda x: x[0])
+
+    grouped_map: dict[str, tuple[datetime, float]] = {}
+    for point_dt, close in raw_points:
+        if granularity == "week":
+            period_end = _week_end_friday(point_dt).date().isoformat()
+        elif interval == "60m":
+            period_end = point_dt.strftime("%Y-%m-%d %H:%M")
+        else:
+            period_end = point_dt.date().isoformat()
+
+        previous = grouped_map.get(period_end)
+        if previous is None or point_dt > previous[0]:
+            grouped_map[period_end] = (point_dt, close)
+
+    close_items = sorted((k, v[1]) for k, v in grouped_map.items())
+
+    threshold_ratio = threshold_pct / 100.0
+    volatile_weeks: list[dict[str, str | float]] = []
+    weekly_price_points: list[dict[str, str | float | bool]] = []
+
+    changes: list[float] = []
+    volatile_dates: set[str] = set()
+    if close_items:
+        prev_close = close_items[0][1]
+        for period_end, close in close_items[1:]:
+            change = (close - prev_close) / prev_close if prev_close else 0.0
+            changes.append(change * 100.0)
+            if abs(change) > threshold_ratio:
+                change_pct = change * 100.0
+                volatile_dates.add(period_end)
+                volatile_weeks.append(
+                    {
+                        "period_end": period_end,
+                        "week_end": period_end,
+                        "change_pct": f"{change_pct:.2f}%",
+                        "change_value": change_pct,
+                    }
+                )
+            prev_close = close
+
+    for period_end, close in close_items:
+        weekly_price_points.append(
+            {"date": period_end, "close": float(close), "is_volatile": period_end in volatile_dates}
+        )
+
+    meta = result0.get("meta") or {}
+    current_price = quote_row.get("regularMarketPrice") or meta.get("regularMarketPrice")
+    if current_price is None:
+        current_price = close_items[-1][1] if close_items else None
+    current_price = float(current_price) if current_price is not None else None
+
+    events = result0.get("events") or {}
+    dividend_events = events.get("dividends") or {}
+    last_dividend = None
+    last_dividend_date = None
+    if isinstance(dividend_events, dict) and dividend_events:
+        latest_ts = max(int(ts) for ts in dividend_events.keys())
+        latest = dividend_events.get(str(latest_ts), {}) or dividend_events.get(latest_ts, {}) or {}
+        amount = latest.get("amount")
+        if amount is not None:
+            last_dividend = float(amount)
+            last_dividend_date = datetime.fromtimestamp(latest_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+
+    asset_profile: dict = {}
+    try:
+        profile_payload = _request_json_with_retry(
+            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker_symbol}",
+            {"modules": "assetProfile"},
+        )
+        summary_rows = ((profile_payload.get("quoteSummary") or {}).get("result")) or []
+        asset_profile = (summary_rows[0].get("assetProfile") if summary_rows else {}) or {}
+    except Exception:
+        asset_profile = {}
+
+    company_name = quote_row.get("longName") or quote_row.get("shortName")
+    company_state = asset_profile.get("state") or asset_profile.get("country")
+    currency = quote_row.get("currency") or meta.get("currency")
+    exchange = quote_row.get("exchange") or quote_row.get("fullExchangeName") or meta.get("exchangeName")
+
+    if current_price is None and not company_name:
+        raise ValueError("No price data found for this ticker.")
+
+    return AnalysisResult(
+        ticker=ticker_symbol.upper(),
+        company_name=company_name,
+        company_state=company_state,
+        currency=currency,
+        exchange=exchange,
+        current_price=current_price,
+        last_dividend=last_dividend,
+        last_dividend_date=last_dividend_date,
+        threshold_pct=threshold_pct,
+        volatile_weeks=volatile_weeks,
+        weekly_price_points=weekly_price_points,
+        volatility_week_count=len(volatile_weeks),
+        max_weekly_gain_pct=max(changes) if changes else None,
+        max_weekly_loss_pct=min(changes) if changes else None,
+        granularity=granularity,
+    )
+
+
+def get_stock_analysis(
+    ticker_symbol: str,
+    period: str = "1y",
+    threshold_pct: int = 5,
+    granularity: str = "week",
+) -> AnalysisResult:
+    ticker = yf.Ticker(ticker_symbol)
+    interval = _history_interval(period, granularity)
+    price_history = _history_with_retry(ticker, period=period, interval=interval)
     if price_history.empty or "Close" not in price_history.columns:
         raise ValueError("No price data found for this ticker.")
 
-    weekly_close = price_history["Close"].resample("W-FRI").last().dropna()
-    weekly_change = weekly_close.pct_change().dropna()
+    close_series = price_history["Close"].dropna()
+    if close_series.empty:
+        raise ValueError("No price data found for this ticker.")
+
+    if granularity == "week":
+        grouped_close = close_series.resample("W-FRI").last().dropna()
+        date_formatter = "%Y-%m-%d"
+    elif interval == "60m":
+        grouped_close = close_series.resample("60min").last().dropna()
+        date_formatter = "%Y-%m-%d %H:%M"
+    else:
+        grouped_close = close_series.resample("D").last().dropna()
+        date_formatter = "%Y-%m-%d"
+
+    period_change = grouped_close.pct_change().dropna()
     threshold_ratio = threshold_pct / 100.0
-    significant_weeks = weekly_change[weekly_change.abs() > threshold_ratio]
+    significant_weeks = period_change[period_change.abs() > threshold_ratio]
 
     volatile_weeks: list[dict[str, str | float]] = []
     for week_end, change in significant_weeks.items():
         change_pct = float(change * 100)
+        period_end = week_end.strftime(date_formatter)
         volatile_weeks.append(
             {
-                "week_end": week_end.strftime("%Y-%m-%d"),
+                "period_end": period_end,
+                "week_end": period_end,
                 "change_pct": f"{change_pct:.2f}%",
                 "change_value": change_pct,
             }
         )
 
-    all_weekly_changes_pct = weekly_change * 100
+    all_weekly_changes_pct = period_change * 100
     max_weekly_gain_pct = (
         float(all_weekly_changes_pct.max()) if not all_weekly_changes_pct.empty else None
     )
@@ -378,10 +810,10 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y", threshold_pct: in
         float(all_weekly_changes_pct.min()) if not all_weekly_changes_pct.empty else None
     )
 
-    volatile_dates = {d.strftime("%Y-%m-%d") for d in significant_weeks.index}
+    volatile_dates = {d.strftime(date_formatter) for d in significant_weeks.index}
     weekly_price_points: list[dict[str, str | float | bool]] = []
-    for point_date, close_price in weekly_close.items():
-        date_str = point_date.strftime("%Y-%m-%d")
+    for point_date, close_price in grouped_close.items():
+        date_str = point_date.strftime(date_formatter)
         weekly_price_points.append(
             {
                 "date": date_str,
@@ -391,9 +823,9 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y", threshold_pct: in
         )
 
     # Prefer latest value already available in the selected period to reduce extra API calls.
-    current_price: Optional[float] = float(weekly_close.iloc[-1]) if not weekly_close.empty else None
+    current_price: Optional[float] = float(grouped_close.iloc[-1]) if not grouped_close.empty else None
     try:
-        recent_price = _history_with_retry(ticker, period="5d")
+        recent_price = _history_with_retry(ticker, period="5d", interval="1d")
         if not recent_price.empty and "Close" in recent_price.columns:
             current_price = float(recent_price["Close"].dropna().iloc[-1])
     except YFRateLimitError:
@@ -441,13 +873,14 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y", threshold_pct: in
         volatility_week_count=len(volatile_weeks),
         max_weekly_gain_pct=max_weekly_gain_pct,
         max_weekly_loss_pct=max_weekly_loss_pct,
+        granularity=granularity,
     )
 
 
 def get_stock_analysis_cached(
-    ticker_symbol: str, period: str = "2y", threshold_pct: int = 5
+    ticker_symbol: str, period: str = "1y", threshold_pct: int = 5, granularity: str = "week"
 ) -> AnalysisResult:
-    cache_key = (ticker_symbol.upper(), period, threshold_pct)
+    cache_key = (ticker_symbol.upper(), period, threshold_pct, granularity)
     now = time.time()
     cached = ANALYSIS_CACHE.get(cache_key)
     if cached:
@@ -457,34 +890,58 @@ def get_stock_analysis_cached(
 
     try:
         result = get_stock_analysis(
-            ticker_symbol=ticker_symbol, period=period, threshold_pct=threshold_pct
+            ticker_symbol=ticker_symbol,
+            period=period,
+            threshold_pct=threshold_pct,
+            granularity=granularity,
         )
-    except YFRateLimitError:
+    except (YFRateLimitError, ValueError) as exc:
+        try:
+            result = get_stock_analysis_http(
+                ticker_symbol=ticker_symbol,
+                period=period,
+                threshold_pct=threshold_pct,
+                granularity=granularity,
+            )
+            ANALYSIS_CACHE[cache_key] = (now, result)
+            return result
+        except Exception:
+            pass
         if cached:
             cached_at, cached_result = cached
             if now - cached_at < STALE_CACHE_MAX_AGE_SECONDS:
                 return cached_result
-        raise
+        raise exc
 
     ANALYSIS_CACHE[cache_key] = (now, result)
     return result
 
 
 def _analyze_input(
-    input_value: str, period: str, threshold_pct: int, record_history: bool = True
+    input_value: str,
+    period: str,
+    threshold_pct: int,
+    granularity: str = "week",
+    record_history: bool = True,
 ) -> AnalysisResult:
     try:
         result = get_stock_analysis_cached(
-            input_value.upper(), period=period, threshold_pct=threshold_pct
+            input_value.upper(),
+            period=period,
+            threshold_pct=threshold_pct,
+            granularity=granularity,
         )
     except ValueError:
         resolved_ticker = _search_symbol_by_name(input_value)
         result = get_stock_analysis_cached(
-            resolved_ticker, period=period, threshold_pct=threshold_pct
+            resolved_ticker,
+            period=period,
+            threshold_pct=threshold_pct,
+            granularity=granularity,
         )
 
     if record_history:
-        _record_recent_search(input_value, result.ticker, period, threshold_pct)
+        _record_recent_search(input_value, result.ticker, period, threshold_pct, granularity)
     return result
 
 
@@ -496,11 +953,12 @@ def _export_csv_response(result: AnalysisResult, query: str) -> tuple[str, int]:
     writer.writerow(["ticker", result.ticker])
     writer.writerow(["company_name", result.company_name or ""])
     writer.writerow(["period", "custom"])
+    writer.writerow(["granularity", result.granularity])
     writer.writerow(["threshold_pct", result.threshold_pct])
     writer.writerow([])
-    writer.writerow(["week_end", "change_pct"])
+    writer.writerow(["period_end", "change_pct"])
     for week in result.volatile_weeks:
-        writer.writerow([week["week_end"], week["change_pct"]])
+        writer.writerow([week.get("period_end") or week.get("week_end"), week["change_pct"]])
 
     response = make_response(csv_buffer.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
@@ -518,28 +976,55 @@ def index():
     input_value = ""
     selected_period = "1y"
     selected_threshold = 5
+    selected_granularity = "week"
 
     if request.method == "POST":
         input_value = request.form.get("ticker", "").strip()
         selected_period = _normalize_period(request.form.get("period", "1y"))
-        selected_threshold = _normalize_threshold(request.form.get("threshold", "5"))
+        selected_granularity = _normalize_granularity(request.form.get("granularity", "week"))
+        selected_threshold = _normalize_threshold(
+            request.form.get("threshold", "5"), selected_granularity
+        )
     elif request.args.get("query"):
         input_value = request.args.get("query", "").strip()
         selected_period = _normalize_period(request.args.get("period", "1y"))
-        selected_threshold = _normalize_threshold(request.args.get("threshold", "5"))
+        selected_granularity = _normalize_granularity(request.args.get("granularity", "week"))
+        selected_threshold = _normalize_threshold(
+            request.args.get("threshold", "5"), selected_granularity
+        )
 
     if input_value:
         try:
             result = _analyze_input(
-                input_value, period=selected_period, threshold_pct=selected_threshold
+                input_value,
+                period=selected_period,
+                threshold_pct=selected_threshold,
+                granularity=selected_granularity,
             )
         except YFRateLimitError:
-            # Avoid noisy user-facing rate-limit popups: fall back to latest cached snapshot.
-            fallback_result = _latest_cached_result()
-            if fallback_result is not None:
-                result = fallback_result
-            else:
-                error = "Data could not be loaded right now. Please try again shortly."
+            # Extra fallback path when yfinance is throttled.
+            try:
+                result = get_stock_analysis_http(
+                    ticker_symbol=input_value.upper(),
+                    period=selected_period,
+                    threshold_pct=selected_threshold,
+                    granularity=selected_granularity,
+                )
+            except Exception:
+                try:
+                    resolved = _search_symbol_by_name_http(input_value)
+                    result = get_stock_analysis_http(
+                        ticker_symbol=resolved,
+                        period=selected_period,
+                        threshold_pct=selected_threshold,
+                        granularity=selected_granularity,
+                    )
+                except Exception:
+                    fallback_result = _latest_cached_result()
+                    if fallback_result is not None:
+                        result = fallback_result
+                    else:
+                        error = "Could not refresh data right now. Try another symbol or range."
         except ValueError as exc:
             error = str(exc)
         except Exception:
@@ -555,7 +1040,11 @@ def index():
         period_options=PERIOD_OPTIONS,
         selected_period=selected_period,
         threshold_options=THRESHOLD_OPTIONS,
+        day_threshold_options=DAY_THRESHOLD_OPTIONS,
+        week_threshold_options=WEEK_THRESHOLD_OPTIONS,
         selected_threshold=selected_threshold,
+        granularity_options=GRANULARITY_OPTIONS,
+        selected_granularity=selected_granularity,
         input_value=input_value,
         recent_searches=list(RECENT_SEARCHES),
     )
@@ -574,10 +1063,17 @@ def export_csv():
         return ("Missing query parameter.", 400)
 
     period = _normalize_period(request.args.get("period", "1y"))
-    threshold = _normalize_threshold(request.args.get("threshold", "5"))
+    granularity = _normalize_granularity(request.args.get("granularity", "week"))
+    threshold = _normalize_threshold(request.args.get("threshold", "5"), granularity)
 
     try:
-        result = _analyze_input(query, period=period, threshold_pct=threshold, record_history=False)
+        result = _analyze_input(
+            query,
+            period=period,
+            threshold_pct=threshold,
+            granularity=granularity,
+            record_history=False,
+        )
     except YFRateLimitError:
         return ("Export is temporarily unavailable. Please try again shortly.", 429)
     except ValueError as exc:

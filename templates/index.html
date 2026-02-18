@@ -116,6 +116,7 @@
       transition: all 120ms ease;
       user-select: none;
     }
+    .threshold-hidden { display: none; }
     .choice-row input:checked + label {
       background: #e0f2fe;
       border-color: #7dd3fc;
@@ -297,10 +298,29 @@
           </div>
           <div class="choice-group">
             <label>Volatility Threshold</label>
-            <div class="choice-row">
+            <div class="choice-row" id="threshold-row">
             {% for value in threshold_options %}
-              <input id="threshold-{{ value }}" type="radio" name="threshold" value="{{ value }}" {% if value == selected_threshold %}checked{% endif %}>
-              <label for="threshold-{{ value }}">{{ value }}%</label>
+              <input
+                id="threshold-{{ value }}"
+                type="radio"
+                name="threshold"
+                value="{{ value }}"
+                data-threshold-type="{% if value in day_threshold_options %}day week{% else %}week{% endif %}"
+                {% if value == selected_threshold %}checked{% endif %}
+              >
+              <label
+                for="threshold-{{ value }}"
+                data-threshold-type="{% if value in day_threshold_options %}day week{% else %}week{% endif %}"
+              >{{ value }}%</label>
+            {% endfor %}
+            </div>
+          </div>
+          <div class="choice-group">
+            <label>Change Mode</label>
+            <div class="choice-row">
+            {% for value, label in granularity_options %}
+              <input id="granularity-{{ value }}" type="radio" name="granularity" value="{{ value }}" {% if value == selected_granularity %}checked{% endif %}>
+              <label for="granularity-{{ value }}">{{ label }}</label>
             {% endfor %}
             </div>
           </div>
@@ -313,7 +333,7 @@
       {% if recent_searches %}
       <div class="recent">
         {% for item in recent_searches %}
-          <a class="recent-item" href="/?query={{ item.query|urlencode }}&period={{ item.period }}&threshold={{ item.threshold }}">{{ item.query }} -> {{ item.ticker }} ({{ item.threshold }}%)</a>
+          <a class="recent-item" href="/?query={{ item.query|urlencode }}&period={{ item.period }}&threshold={{ item.threshold }}&granularity={{ item.granularity or 'week' }}">{{ item.query }} -> {{ item.ticker }} ({{ item.threshold }}%, {{ item.granularity or 'week' }})</a>
         {% endfor %}
       </div>
       {% endif %}
@@ -326,7 +346,7 @@
     {% if result %}
     <section class="results">
       <div class="card">
-        <h2 class="ticker">{{ result.ticker }} <span class="pill">{{ selected_period }} | {{ result.threshold_pct }}%</span></h2>
+        <h2 class="ticker">{{ result.ticker }} <span class="pill">{{ selected_period }} | {{ selected_granularity }} | {{ result.threshold_pct }}%</span></h2>
         <div class="stat-grid">
           <div class="stat"><span class="k">Company Name</span><span class="v">{{ result.company_name or "Not available" }}</span></div>
           <div class="stat"><span class="k">Company State</span><span class="v">{{ result.company_state or "Not available" }}</span></div>
@@ -334,43 +354,43 @@
           <div class="stat"><span class="k">Current Price</span><span class="v">{% if result.current_price is not none %}{{ "%.2f"|format(result.current_price) }} {{ result.currency or "" }}{% else %}Not available{% endif %}</span></div>
           <div class="stat"><span class="k">Last Dividend</span><span class="v">{% if result.last_dividend is not none %}{{ "%.4f"|format(result.last_dividend) }} {{ result.currency or "" }} ({{ result.last_dividend_date }}){% else %}Not available{% endif %}</span></div>
           <div class="stat"><span class="k">Volatile Weeks</span><span class="v">{{ result.volatility_week_count }}</span></div>
-          <div class="stat"><span class="k">Max Weekly Gain</span><span class="v">{% if result.max_weekly_gain_pct is not none %}{{ "%.2f"|format(result.max_weekly_gain_pct) }}%{% else %}N/A{% endif %}</span></div>
-          <div class="stat"><span class="k">Max Weekly Loss</span><span class="v">{% if result.max_weekly_loss_pct is not none %}{{ "%.2f"|format(result.max_weekly_loss_pct) }}%{% else %}N/A{% endif %}</span></div>
+          <div class="stat"><span class="k">Max Period Gain</span><span class="v">{% if result.max_weekly_gain_pct is not none %}{{ "%.2f"|format(result.max_weekly_gain_pct) }}%{% else %}N/A{% endif %}</span></div>
+          <div class="stat"><span class="k">Max Period Loss</span><span class="v">{% if result.max_weekly_loss_pct is not none %}{{ "%.2f"|format(result.max_weekly_loss_pct) }}%{% else %}N/A{% endif %}</span></div>
         </div>
 
         <div class="small-actions">
-          <a class="subtle-btn" href="/export.csv?query={{ input_value|urlencode }}&period={{ selected_period }}&threshold={{ selected_threshold }}">Download CSV</a>
+          <a class="subtle-btn" href="/export.csv?query={{ input_value|urlencode }}&period={{ selected_period }}&threshold={{ selected_threshold }}&granularity={{ selected_granularity }}">Download CSV</a>
         </div>
       </div>
 
       <div class="card">
-        <h3>Price Trend (Weekly Close)</h3>
+        <h3>Price Trend ({% if selected_granularity == "week" %}Week End Close{% elif selected_period == "1d" %}Hourly Close{% else %}Daily Close{% endif %})</h3>
         <div class="chart-wrap">
           <canvas id="priceChart"></canvas>
         </div>
       </div>
 
       <div class="card">
-        <h3>Weeks with More Than {{ result.threshold_pct }}% Price Change</h3>
+        <h3>Periods with More Than {{ result.threshold_pct }}% Price Change</h3>
         {% if result.volatile_weeks %}
           <table>
             <thead>
               <tr>
-                <th>Week Ending</th>
+                <th>Period End</th>
                 <th>Price Change</th>
               </tr>
             </thead>
             <tbody>
               {% for week in result.volatile_weeks %}
                 <tr>
-                  <td>{{ week.week_end }}</td>
+                  <td>{{ week.period_end or week.week_end }}</td>
                   <td class="{% if week.change_value < 0 %}neg{% else %}pos{% endif %}">{{ week.change_pct }}</td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         {% else %}
-          <p class="empty">No weeks with movement greater than {{ result.threshold_pct }}% in the selected period.</p>
+          <p class="empty">No periods with movement greater than {{ result.threshold_pct }}% in the selected period.</p>
         {% endif %}
       </div>
     </section>
@@ -391,7 +411,7 @@
       data: {
         labels,
         datasets: [{
-          label: "Weekly Close",
+          label: "{% if selected_granularity == 'week' %}Week End Close{% elif selected_period == '1d' %}Hourly Close{% else %}Daily Close{% endif %}",
           data,
           borderColor: "#005f73",
           backgroundColor: "rgba(0, 95, 115, 0.1)",
@@ -423,5 +443,39 @@
     });
   </script>
   {% endif %}
+<script>
+  (function () {
+    const granularityInputs = document.querySelectorAll('input[name="granularity"]');
+    const thresholdInputs = Array.from(document.querySelectorAll('input[name="threshold"]'));
+
+    function applyThresholdVisibility() {
+      const selectedGranularity = document.querySelector('input[name="granularity"]:checked')?.value || "week";
+      let firstAllowed = null;
+
+      thresholdInputs.forEach((input) => {
+        const allowedTypes = (input.dataset.thresholdType || "").split(/\s+/);
+        const allowed = allowedTypes.includes(selectedGranularity);
+        const label = document.querySelector(`label[for="${input.id}"]`);
+        input.disabled = !allowed;
+        if (label) {
+          label.classList.toggle("threshold-hidden", !allowed);
+        }
+        if (allowed && !firstAllowed) {
+          firstAllowed = input;
+        }
+      });
+
+      const checked = document.querySelector('input[name="threshold"]:checked');
+      if (!checked || checked.disabled) {
+        if (firstAllowed) {
+          firstAllowed.checked = true;
+        }
+      }
+    }
+
+    granularityInputs.forEach((input) => input.addEventListener("change", applyThresholdVisibility));
+    applyThresholdVisibility();
+  })();
+</script>
 </body>
 </html>

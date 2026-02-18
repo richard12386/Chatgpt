@@ -65,6 +65,7 @@ class RouteTests(unittest.TestCase):
             volatility_week_count=1,
             max_weekly_gain_pct=6.1,
             max_weekly_loss_pct=-3.2,
+            granularity="week",
         )
 
         response = self.client.post("/", data={"ticker": "AAPL", "period": "1y", "threshold": "5"})
@@ -74,7 +75,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn("Apple Inc.", body)
         self.assertIn("AAPL", body)
         self.assertIn("6.10%", body)
-        analysis_mock.assert_called_once_with("AAPL", period="1y", threshold_pct=5)
+        analysis_mock.assert_called_once_with("AAPL", period="1y", threshold_pct=5, granularity="week")
 
     @patch("app._search_symbol_by_name")
     @patch("app.get_stock_analysis_cached")
@@ -99,6 +100,7 @@ class RouteTests(unittest.TestCase):
                 volatility_week_count=0,
                 max_weekly_gain_pct=None,
                 max_weekly_loss_pct=None,
+                granularity="week",
             ),
         ]
 
@@ -113,6 +115,8 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(analysis_mock.call_args_list[1].args[0], "HO.PA")
         self.assertEqual(analysis_mock.call_args_list[0].kwargs["threshold_pct"], 5)
         self.assertEqual(analysis_mock.call_args_list[1].kwargs["threshold_pct"], 5)
+        self.assertEqual(analysis_mock.call_args_list[0].kwargs["granularity"], "week")
+        self.assertEqual(analysis_mock.call_args_list[1].kwargs["granularity"], "week")
 
     @patch("app._analyze_input")
     def test_export_csv_returns_attachment(self, analyze_mock: Mock):
@@ -131,6 +135,7 @@ class RouteTests(unittest.TestCase):
             volatility_week_count=1,
             max_weekly_gain_pct=6.1,
             max_weekly_loss_pct=-3.2,
+            granularity="week",
         )
 
         response = self.client.get("/export.csv?query=AAPL&period=1y&threshold=5")
@@ -138,7 +143,7 @@ class RouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/csv", response.content_type)
-        self.assertIn("week_end,change_pct", body)
+        self.assertIn("period_end,change_pct", body)
 
     def test_health_endpoint(self):
         response = self.client.get("/health")
@@ -149,17 +154,25 @@ class RouteTests(unittest.TestCase):
 
     @patch("app._analyze_input")
     @patch("app._latest_cached_result")
+    @patch("app.get_stock_analysis_http")
+    @patch("app._search_symbol_by_name_http")
     def test_rate_limit_without_fallback_shows_error(
-        self, latest_cached_mock: Mock, analyze_mock: Mock
+        self,
+        search_http_mock: Mock,
+        analysis_http_mock: Mock,
+        latest_cached_mock: Mock,
+        analyze_mock: Mock,
     ):
         analyze_mock.side_effect = YFRateLimitError()
         latest_cached_mock.return_value = None
+        analysis_http_mock.side_effect = RuntimeError("fallback failed")
+        search_http_mock.side_effect = RuntimeError("search failed")
 
         response = self.client.post("/", data={"ticker": "AAPL", "period": "2y", "threshold": "5"})
         body = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Data could not be loaded right now. Please try again shortly.", body)
+        self.assertIn("Could not refresh data right now. Try another symbol or range.", body)
 
 
 if __name__ == "__main__":
