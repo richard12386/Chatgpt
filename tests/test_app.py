@@ -38,6 +38,7 @@ class HistoryRetryTests(unittest.TestCase):
 
 class RouteTests(unittest.TestCase):
     def setUp(self):
+        app.app.config["TESTING"] = True
         self.client = app.app.test_client()
 
     def test_post_empty_input_returns_validation_error(self):

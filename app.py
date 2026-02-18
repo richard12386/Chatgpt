@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 import csv
 import io
+import math
 import os
 import random
 import time
@@ -42,6 +43,103 @@ class AnalysisResult:
     volatility_week_count: int
     max_weekly_gain_pct: Optional[float]
     max_weekly_loss_pct: Optional[float]
+
+
+def _fetch_screen_live(query_name: str, size: int = 25, retries: int = 3) -> list[dict]:
+    delay = 0.8
+    for attempt in range(retries):
+        try:
+            data = yf.screen(query_name, size=size)
+            return data.get("quotes", []) if isinstance(data, dict) else []
+        except YFRateLimitError:
+            if attempt == retries - 1:
+                return []
+            time.sleep(delay + random.uniform(0.0, 0.3))
+            delay *= 1.8
+        except Exception:
+            return []
+    return []
+
+
+def _to_market_row(quote: dict) -> Optional[dict]:
+    symbol = quote.get("symbol")
+    if not symbol:
+        return None
+    return {
+        "symbol": str(symbol),
+        "name": quote.get("longName") or quote.get("shortName") or str(symbol),
+        "price": quote.get("regularMarketPrice"),
+        "change_pct": quote.get("regularMarketChangePercent"),
+        "volume": quote.get("regularMarketVolume") or 0,
+        "exchange": quote.get("exchange") or quote.get("fullExchangeName"),
+        "currency": quote.get("currency"),
+        "market_cap": quote.get("marketCap") or 0,
+    }
+
+
+def _build_recommendations(buys: list[dict], gainers: list[dict], count: int = 5) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for row in buys + gainers:
+        symbol = row["symbol"]
+        existing = merged.get(symbol)
+        if existing is None or (row.get("change_pct") or -999) > (existing.get("change_pct") or -999):
+            merged[symbol] = row
+
+    scored: list[dict] = []
+    for row in merged.values():
+        change_pct = float(row.get("change_pct") or 0.0)
+        if change_pct <= 0:
+            continue
+        volume = float(row.get("volume") or 0.0)
+        market_cap = float(row.get("market_cap") or 0.0)
+        score = (change_pct * 0.65) + (math.log10(volume + 1.0) * 0.25) + (math.log10(market_cap + 1.0) * 0.10)
+        enriched = dict(row)
+        enriched["score"] = round(score, 3)
+        scored.append(enriched)
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:count]
+
+
+def get_market_overview_live() -> dict:
+    if app.config.get("TESTING"):
+        return {
+            "active_buys": [],
+            "active_sells": [],
+            "gainers": [],
+            "losers": [],
+            "recommendations": [],
+        }
+
+    actives_raw = _fetch_screen_live("most_actives", size=40)
+    gainers_raw = _fetch_screen_live("day_gainers", size=25)
+    losers_raw = _fetch_screen_live("day_losers", size=25)
+
+    actives_rows = [row for row in (_to_market_row(q) for q in actives_raw) if row is not None]
+    gainers_rows = [row for row in (_to_market_row(q) for q in gainers_raw) if row is not None]
+    losers_rows = [row for row in (_to_market_row(q) for q in losers_raw) if row is not None]
+
+    active_buys = [r for r in actives_rows if (r.get("change_pct") or 0) > 0]
+    active_sells = [r for r in actives_rows if (r.get("change_pct") or 0) < 0]
+
+    active_buys.sort(key=lambda x: x.get("volume", 0), reverse=True)
+    active_sells.sort(key=lambda x: x.get("volume", 0), reverse=True)
+    gainers_rows.sort(key=lambda x: x.get("change_pct") or -999, reverse=True)
+    losers_rows.sort(key=lambda x: x.get("change_pct") or 999)
+
+    top_active_buys = active_buys[:10]
+    top_active_sells = active_sells[:10]
+    top_gainers = gainers_rows[:10]
+    top_losers = losers_rows[:10]
+    recommendations = _build_recommendations(top_active_buys, top_gainers, count=5)
+
+    return {
+        "active_buys": top_active_buys,
+        "active_sells": top_active_sells,
+        "gainers": top_gainers,
+        "losers": top_losers,
+        "recommendations": recommendations,
+    }
 
 
 def _history_with_retry(
@@ -288,6 +386,7 @@ def _export_csv_response(result: AnalysisResult, query: str) -> tuple[str, int]:
 def index():
     result: Optional[AnalysisResult] = None
     error: Optional[str] = None
+    market = get_market_overview_live()
 
     input_value = ""
     selected_period = "2y"
@@ -324,6 +423,7 @@ def index():
 
     return render_template(
         "index.html",
+        market=market,
         result=result,
         error=error,
         period_options=PERIOD_OPTIONS,
