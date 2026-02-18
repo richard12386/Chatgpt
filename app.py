@@ -111,6 +111,16 @@ def _record_recent_search(query: str, ticker: str, period: str, threshold_pct: i
     RECENT_SEARCHES.extend(deduped)
 
 
+def _latest_cached_result() -> Optional["AnalysisResult"]:
+    if not ANALYSIS_CACHE:
+        return None
+    latest_timestamp = max(ts for ts, _ in ANALYSIS_CACHE.values())
+    for ts, result in ANALYSIS_CACHE.values():
+        if ts == latest_timestamp:
+            return result
+    return None
+
+
 def get_stock_analysis(ticker_symbol: str, period: str = "2y", threshold_pct: int = 5) -> AnalysisResult:
     ticker = yf.Ticker(ticker_symbol)
 
@@ -298,7 +308,12 @@ def index():
                 input_value, period=selected_period, threshold_pct=selected_threshold
             )
         except YFRateLimitError:
-            error = "Data provider is busy right now. Please try again shortly."
+            # Avoid noisy user-facing rate-limit popups: fall back to latest cached snapshot.
+            fallback_result = _latest_cached_result()
+            if fallback_result is not None:
+                result = fallback_result
+            else:
+                error = "Could not refresh data right now. Please try again shortly."
         except ValueError as exc:
             error = str(exc)
         except Exception:
@@ -332,7 +347,7 @@ def export_csv():
     try:
         result = _analyze_input(query, period=period, threshold_pct=threshold, record_history=False)
     except YFRateLimitError:
-        return ("Data provider is busy right now. Please try export again shortly.", 429)
+        return ("Export is temporarily unavailable. Please try again shortly.", 429)
     except ValueError as exc:
         return (str(exc), 400)
     except Exception:
