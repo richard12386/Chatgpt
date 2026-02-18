@@ -12,6 +12,8 @@ from yfinance.exceptions import YFRateLimitError
 app = Flask(__name__)
 app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "0") == "1"
 PERIOD_OPTIONS = [("6mo", "6 Months"), ("1y", "1 Year"), ("2y", "2 Years"), ("5y", "5 Years")]
+CACHE_TTL_SECONDS = 300
+ANALYSIS_CACHE: dict[tuple[str, str], tuple[float, "AnalysisResult"]] = {}
 
 
 @dataclass
@@ -111,6 +113,20 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y") -> AnalysisResult
     )
 
 
+def get_stock_analysis_cached(ticker_symbol: str, period: str = "2y") -> AnalysisResult:
+    cache_key = (ticker_symbol.upper(), period)
+    now = time.time()
+    cached = ANALYSIS_CACHE.get(cache_key)
+    if cached:
+        cached_at, cached_result = cached
+        if now - cached_at < CACHE_TTL_SECONDS:
+            return cached_result
+
+    result = get_stock_analysis(ticker_symbol=ticker_symbol, period=period)
+    ANALYSIS_CACHE[cache_key] = (now, result)
+    return result
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     result: Optional[AnalysisResult] = None
@@ -127,11 +143,11 @@ def index():
             try:
                 # First try as direct ticker input.
                 try:
-                    result = get_stock_analysis(input_value.upper(), period=selected_period)
+                    result = get_stock_analysis_cached(input_value.upper(), period=selected_period)
                 except ValueError:
                     # If no data for direct ticker, try to resolve by company name.
                     resolved_ticker = _search_symbol_by_name(input_value)
-                    result = get_stock_analysis(resolved_ticker, period=selected_period)
+                    result = get_stock_analysis_cached(resolved_ticker, period=selected_period)
             except YFRateLimitError:
                 error = (
                     "Yahoo Finance is temporarily rate-limiting requests. "
