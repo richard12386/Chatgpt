@@ -312,8 +312,7 @@ def index():
             fallback_result = _latest_cached_result()
             if fallback_result is not None:
                 result = fallback_result
-            else:
-                error = "Could not refresh data right now. Please try again shortly."
+            # If no fallback exists, keep UI quiet instead of showing a popup.
         except ValueError as exc:
             error = str(exc)
         except Exception:
