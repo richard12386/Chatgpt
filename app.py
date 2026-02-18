@@ -1,30 +1,45 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+import csv
+import io
 import os
 import time
 from typing import Optional
 
 import yfinance as yf
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, make_response, render_template, request
 from yfinance.exceptions import YFRateLimitError
 
 app = Flask(__name__)
 app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "0") == "1"
+
 PERIOD_OPTIONS = [("6mo", "6 Months"), ("1y", "1 Year"), ("2y", "2 Years"), ("5y", "5 Years")]
+THRESHOLD_OPTIONS = [3, 5, 10]
 CACHE_TTL_SECONDS = 300
-ANALYSIS_CACHE: dict[tuple[str, str], tuple[float, "AnalysisResult"]] = {}
+MAX_RECENT_SEARCHES = 8
+
+ANALYSIS_CACHE: dict[tuple[str, str, int], tuple[float, "AnalysisResult"]] = {}
+RECENT_SEARCHES: deque[dict[str, str]] = deque(maxlen=MAX_RECENT_SEARCHES)
 
 
 @dataclass
 class AnalysisResult:
     ticker: str
     company_name: Optional[str]
+    company_state: Optional[str]
+    currency: Optional[str]
+    exchange: Optional[str]
     current_price: Optional[float]
     last_dividend: Optional[float]
     last_dividend_date: Optional[str]
-    company_state: Optional[str]
-    volatile_weeks: list[dict[str, str]]
+    threshold_pct: int
+    volatile_weeks: list[dict[str, str | float]]
+    weekly_price_points: list[dict[str, str | float | bool]]
+    volatility_week_count: int
+    max_weekly_gain_pct: Optional[float]
+    max_weekly_loss_pct: Optional[float]
 
 
 def _history_with_retry(
@@ -59,7 +74,42 @@ def _search_symbol_by_name(query: str, retries: int = 3, initial_delay: float = 
             delay *= 2
 
 
-def get_stock_analysis(ticker_symbol: str, period: str = "2y") -> AnalysisResult:
+def _normalize_period(requested_period: str) -> str:
+    return requested_period if requested_period in dict(PERIOD_OPTIONS) else "2y"
+
+
+def _normalize_threshold(requested_threshold: str) -> int:
+    try:
+        threshold = int(requested_threshold)
+    except (TypeError, ValueError):
+        return 5
+    return threshold if threshold in THRESHOLD_OPTIONS else 5
+
+
+def _record_recent_search(query: str, ticker: str, period: str, threshold_pct: int):
+    entry = {
+        "query": query,
+        "ticker": ticker,
+        "period": period,
+        "threshold": str(threshold_pct),
+        "timestamp": time.strftime("%H:%M:%S"),
+    }
+
+    deduped = deque(
+        (x for x in RECENT_SEARCHES if not (
+            x["query"].lower() == query.lower()
+            and x["ticker"] == ticker
+            and x["period"] == period
+            and x["threshold"] == str(threshold_pct)
+        )),
+        maxlen=MAX_RECENT_SEARCHES,
+    )
+    deduped.appendleft(entry)
+    RECENT_SEARCHES.clear()
+    RECENT_SEARCHES.extend(deduped)
+
+
+def get_stock_analysis(ticker_symbol: str, period: str = "2y", threshold_pct: int = 5) -> AnalysisResult:
     ticker = yf.Ticker(ticker_symbol)
 
     price_history = _history_with_retry(ticker, period=period)
@@ -68,14 +118,37 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y") -> AnalysisResult
 
     weekly_close = price_history["Close"].resample("W-FRI").last().dropna()
     weekly_change = weekly_close.pct_change().dropna()
-    significant_weeks = weekly_change[weekly_change.abs() > 0.05]
+    threshold_ratio = threshold_pct / 100.0
+    significant_weeks = weekly_change[weekly_change.abs() > threshold_ratio]
 
-    volatile_weeks: list[dict[str, str]] = []
+    volatile_weeks: list[dict[str, str | float]] = []
     for week_end, change in significant_weeks.items():
+        change_pct = float(change * 100)
         volatile_weeks.append(
             {
                 "week_end": week_end.strftime("%Y-%m-%d"),
-                "change_pct": f"{change * 100:.2f}%",
+                "change_pct": f"{change_pct:.2f}%",
+                "change_value": change_pct,
+            }
+        )
+
+    all_weekly_changes_pct = weekly_change * 100
+    max_weekly_gain_pct = (
+        float(all_weekly_changes_pct.max()) if not all_weekly_changes_pct.empty else None
+    )
+    max_weekly_loss_pct = (
+        float(all_weekly_changes_pct.min()) if not all_weekly_changes_pct.empty else None
+    )
+
+    volatile_dates = {d.strftime("%Y-%m-%d") for d in significant_weeks.index}
+    weekly_price_points: list[dict[str, str | float | bool]] = []
+    for point_date, close_price in weekly_close.items():
+        date_str = point_date.strftime("%Y-%m-%d")
+        weekly_price_points.append(
+            {
+                "date": date_str,
+                "close": float(close_price),
+                "is_volatile": date_str in volatile_dates,
             }
         )
 
@@ -93,28 +166,42 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y") -> AnalysisResult
 
     company_name: Optional[str] = None
     company_state: Optional[str] = None
+    currency: Optional[str] = None
+    exchange: Optional[str] = None
     try:
         info = ticker.info or {}
         company_name = info.get("longName") or info.get("shortName")
         company_state = info.get("state")
+        currency = info.get("currency")
+        exchange = info.get("exchange")
     except Exception:
-        # Some tickers do not expose profile data consistently.
         company_name = None
         company_state = None
+        currency = None
+        exchange = None
 
     return AnalysisResult(
         ticker=ticker_symbol.upper(),
         company_name=company_name,
+        company_state=company_state,
+        currency=currency,
+        exchange=exchange,
         current_price=current_price,
         last_dividend=last_dividend,
         last_dividend_date=last_dividend_date,
-        company_state=company_state,
+        threshold_pct=threshold_pct,
         volatile_weeks=volatile_weeks,
+        weekly_price_points=weekly_price_points,
+        volatility_week_count=len(volatile_weeks),
+        max_weekly_gain_pct=max_weekly_gain_pct,
+        max_weekly_loss_pct=max_weekly_loss_pct,
     )
 
 
-def get_stock_analysis_cached(ticker_symbol: str, period: str = "2y") -> AnalysisResult:
-    cache_key = (ticker_symbol.upper(), period)
+def get_stock_analysis_cached(
+    ticker_symbol: str, period: str = "2y", threshold_pct: int = 5
+) -> AnalysisResult:
+    cache_key = (ticker_symbol.upper(), period, threshold_pct)
     now = time.time()
     cached = ANALYSIS_CACHE.get(cache_key)
     if cached:
@@ -122,42 +209,88 @@ def get_stock_analysis_cached(ticker_symbol: str, period: str = "2y") -> Analysi
         if now - cached_at < CACHE_TTL_SECONDS:
             return cached_result
 
-    result = get_stock_analysis(ticker_symbol=ticker_symbol, period=period)
+    result = get_stock_analysis(
+        ticker_symbol=ticker_symbol, period=period, threshold_pct=threshold_pct
+    )
     ANALYSIS_CACHE[cache_key] = (now, result)
     return result
+
+
+def _analyze_input(
+    input_value: str, period: str, threshold_pct: int, record_history: bool = True
+) -> AnalysisResult:
+    try:
+        result = get_stock_analysis_cached(
+            input_value.upper(), period=period, threshold_pct=threshold_pct
+        )
+    except ValueError:
+        resolved_ticker = _search_symbol_by_name(input_value)
+        result = get_stock_analysis_cached(
+            resolved_ticker, period=period, threshold_pct=threshold_pct
+        )
+
+    if record_history:
+        _record_recent_search(input_value, result.ticker, period, threshold_pct)
+    return result
+
+
+def _export_csv_response(result: AnalysisResult, query: str) -> tuple[str, int]:
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+
+    writer.writerow(["query", query])
+    writer.writerow(["ticker", result.ticker])
+    writer.writerow(["company_name", result.company_name or ""])
+    writer.writerow(["period", "custom"])
+    writer.writerow(["threshold_pct", result.threshold_pct])
+    writer.writerow([])
+    writer.writerow(["week_end", "change_pct"])
+    for week in result.volatile_weeks:
+        writer.writerow([week["week_end"], week["change_pct"]])
+
+    response = make_response(csv_buffer.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers[
+        "Content-Disposition"
+    ] = f"attachment; filename=volatility_{result.ticker}_{result.threshold_pct}pct.csv"
+    return response
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     result: Optional[AnalysisResult] = None
     error: Optional[str] = None
+
+    input_value = ""
     selected_period = "2y"
+    selected_threshold = 5
 
     if request.method == "POST":
         input_value = request.form.get("ticker", "").strip()
-        requested_period = request.form.get("period", "2y")
-        selected_period = requested_period if requested_period in dict(PERIOD_OPTIONS) else "2y"
-        if not input_value:
-            error = "Please enter a ticker symbol or company name."
-        else:
-            try:
-                # First try as direct ticker input.
-                try:
-                    result = get_stock_analysis_cached(input_value.upper(), period=selected_period)
-                except ValueError:
-                    # If no data for direct ticker, try to resolve by company name.
-                    resolved_ticker = _search_symbol_by_name(input_value)
-                    result = get_stock_analysis_cached(resolved_ticker, period=selected_period)
-            except YFRateLimitError:
-                error = (
-                    "Yahoo Finance is temporarily rate-limiting requests. "
-                    "Please wait a minute and try again."
-                )
-            except ValueError as exc:
-                error = str(exc)
-            except Exception:
-                app.logger.exception("Unexpected error while analyzing input: %s", input_value)
-                error = "Could not analyze this input right now. Please try again."
+        selected_period = _normalize_period(request.form.get("period", "2y"))
+        selected_threshold = _normalize_threshold(request.form.get("threshold", "5"))
+    elif request.args.get("query"):
+        input_value = request.args.get("query", "").strip()
+        selected_period = _normalize_period(request.args.get("period", "2y"))
+        selected_threshold = _normalize_threshold(request.args.get("threshold", "5"))
+
+    if input_value:
+        try:
+            result = _analyze_input(
+                input_value, period=selected_period, threshold_pct=selected_threshold
+            )
+        except YFRateLimitError:
+            error = (
+                "Yahoo Finance is temporarily rate-limiting requests. "
+                "Please wait a minute and try again."
+            )
+        except ValueError as exc:
+            error = str(exc)
+        except Exception:
+            app.logger.exception("Unexpected error while analyzing input: %s", input_value)
+            error = "Could not analyze this input right now. Please try again."
+    elif request.method == "POST":
+        error = "Please enter a ticker symbol or company name."
 
     return render_template(
         "index.html",
@@ -165,6 +298,42 @@ def index():
         error=error,
         period_options=PERIOD_OPTIONS,
         selected_period=selected_period,
+        threshold_options=THRESHOLD_OPTIONS,
+        selected_threshold=selected_threshold,
+        input_value=input_value,
+        recent_searches=list(RECENT_SEARCHES),
+    )
+
+
+@app.get("/export.csv")
+def export_csv():
+    query = request.args.get("query", "").strip()
+    if not query:
+        return ("Missing query parameter.", 400)
+
+    period = _normalize_period(request.args.get("period", "2y"))
+    threshold = _normalize_threshold(request.args.get("threshold", "5"))
+
+    try:
+        result = _analyze_input(query, period=period, threshold_pct=threshold, record_history=False)
+    except YFRateLimitError:
+        return ("Rate limited by Yahoo Finance. Please try again later.", 429)
+    except ValueError as exc:
+        return (str(exc), 400)
+    except Exception:
+        app.logger.exception("Unexpected error during CSV export: %s", query)
+        return ("Could not export CSV right now.", 500)
+
+    return _export_csv_response(result, query)
+
+
+@app.get("/health")
+def health():
+    return jsonify(
+        status="ok",
+        timestamp=int(time.time()),
+        cache_entries=len(ANALYSIS_CACHE),
+        recent_searches=len(RECENT_SEARCHES),
     )
 
 

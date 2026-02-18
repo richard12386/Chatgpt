@@ -10,7 +10,7 @@
       --bg-2: #f4f7ff;
       --ink: #162029;
       --muted: #5f6b76;
-      --panel: rgba(255, 255, 255, 0.85);
+      --panel: rgba(255, 255, 255, 0.88);
       --line: #d9dee4;
       --accent: #005f73;
       --danger: #b42318;
@@ -29,19 +29,19 @@
       min-height: 100vh;
     }
     .page {
-      max-width: 980px;
+      max-width: 1020px;
       margin: 0 auto;
-      padding: 2.2rem 1rem 3rem;
-      animation: fade-slide 450ms ease-out both;
+      padding: 2rem 1rem 3rem;
+      animation: fade-slide 420ms ease-out both;
     }
-    .hero {
+    .hero, .card {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 18px;
-      padding: 1.2rem 1.2rem 1rem;
+      box-shadow: 0 12px 28px rgba(22, 32, 41, 0.08);
       backdrop-filter: blur(6px);
-      box-shadow: 0 14px 35px rgba(22, 32, 41, 0.08);
     }
+    .hero { padding: 1.2rem; }
     h1 {
       margin: 0 0 0.35rem;
       letter-spacing: 0.02em;
@@ -64,7 +64,7 @@
     form {
       margin-top: 1rem;
       display: grid;
-      grid-template-columns: 1fr 160px auto;
+      grid-template-columns: 1fr 160px 170px auto;
       gap: 0.65rem;
       align-items: end;
     }
@@ -84,7 +84,7 @@
       font-size: 0.98rem;
       color: var(--ink);
     }
-    button {
+    button, .link-btn {
       border: 0;
       border-radius: 12px;
       background: linear-gradient(135deg, var(--accent), #0a9396);
@@ -92,10 +92,11 @@
       font-weight: 700;
       padding: 0.74rem 1rem;
       cursor: pointer;
-      transition: transform 140ms ease, box-shadow 140ms ease;
-      box-shadow: 0 8px 18px rgba(0, 95, 115, 0.25);
+      text-decoration: none;
+      display: inline-block;
+      transition: transform 140ms ease;
     }
-    button:hover { transform: translateY(-1px); }
+    button:hover, .link-btn:hover { transform: translateY(-1px); }
     .error {
       margin-top: 1rem;
       color: var(--danger);
@@ -109,25 +110,17 @@
       display: grid;
       gap: 1rem;
     }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 1rem;
-      box-shadow: 0 10px 24px rgba(22, 32, 41, 0.06);
-      animation: fade-slide 380ms ease-out both;
-    }
+    .card { padding: 1rem; }
     .ticker {
       margin: 0 0 0.8rem;
-      font-size: 1.35rem;
-      letter-spacing: 0.03em;
+      font-size: 1.3rem;
       display: inline-flex;
       align-items: center;
       gap: 0.5rem;
     }
     .pill {
-      font-size: 0.78rem;
-      padding: 0.22rem 0.5rem;
+      font-size: 0.76rem;
+      padding: 0.2rem 0.5rem;
       border-radius: 999px;
       background: #dbeafe;
       color: #1e40af;
@@ -135,7 +128,7 @@
     }
     .stat-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 0.75rem;
     }
     .stat {
@@ -144,63 +137,103 @@
       border-radius: 12px;
       padding: 0.65rem 0.75rem;
     }
-    .stat .k {
+    .k {
       display: block;
-      font-size: 0.8rem;
+      font-size: 0.77rem;
       color: var(--muted);
-      margin-bottom: 0.22rem;
       text-transform: uppercase;
       letter-spacing: 0.06em;
       font-weight: 700;
+      margin-bottom: 0.25rem;
     }
-    .stat .v {
+    .v {
       font-weight: 700;
-      font-size: 1rem;
+      font-size: 0.98rem;
     }
-    .weeks-title {
-      margin: 0 0 0.55rem;
-      font-size: 1.1rem;
+    .small-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.8rem;
+    }
+    .subtle-btn {
+      background: #edf6f9;
+      color: #0f172a;
+      border: 1px solid #cce3e8;
+      border-radius: 10px;
+      padding: 0.4rem 0.65rem;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.86rem;
+    }
+    .chart-wrap {
+      height: 340px;
+      margin-top: 0.8rem;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.7rem;
     }
     table {
       width: 100%;
       border-collapse: separate;
       border-spacing: 0;
-      overflow: hidden;
       border-radius: 12px;
+      overflow: hidden;
       border: 1px solid var(--line);
       background: #fff;
     }
     th, td {
-      padding: 0.65rem 0.75rem;
+      padding: 0.62rem 0.72rem;
       text-align: left;
       border-bottom: 1px solid var(--line);
     }
     tbody tr:last-child td { border-bottom: 0; }
     th {
       background: #f2f6fb;
-      font-size: 0.86rem;
-      letter-spacing: 0.04em;
+      font-size: 0.84rem;
       text-transform: uppercase;
       color: #334155;
+      letter-spacing: 0.04em;
     }
     .pos { color: var(--good); font-weight: 700; }
     .neg { color: var(--bad); font-weight: 700; }
     .empty {
       margin: 0;
       color: var(--muted);
-      background: #fff;
       border: 1px dashed var(--line);
       border-radius: 12px;
-      padding: 0.8rem;
+      padding: 0.75rem;
+      background: #fff;
+    }
+    .recent {
+      margin-top: 0.85rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .recent-item {
+      text-decoration: none;
+      color: #0f172a;
+      background: #f8fafc;
+      border: 1px solid #dbe2ea;
+      border-radius: 999px;
+      padding: 0.35rem 0.65rem;
+      font-size: 0.84rem;
     }
     @keyframes fade-slide {
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
     }
-    @media (max-width: 760px) {
-      .page { padding: 1rem 0.8rem 2rem; }
+    @media (max-width: 880px) {
+      form { grid-template-columns: 1fr 1fr; }
+      .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .page { padding: 1rem 0.75rem 2rem; }
       form { grid-template-columns: 1fr; }
       .stat-grid { grid-template-columns: 1fr; }
+      .chart-wrap { height: 280px; }
     }
   </style>
 </head>
@@ -208,13 +241,13 @@
   <main class="page">
     <section class="hero">
       <h1>Yahoo Finance Stock Analyzer</h1>
-      <p class="lead">Analyze weekly volatility, latest dividend, and company profile from ticker or company name.</p>
+      <p class="lead">Analyze weekly volatility, dividends, company profile, and export results.</p>
       <p class="note">Yahoo Finance may temporarily rate-limit requests. If that happens, wait a minute and try again.</p>
 
       <form method="post">
         <div>
           <label for="ticker">Ticker or Company Name</label>
-          <input id="ticker" type="text" name="ticker" placeholder="e.g. AAPL or Thales" required>
+          <input id="ticker" type="text" name="ticker" value="{{ input_value }}" placeholder="e.g. AAPL or Thales" required>
         </div>
         <div>
           <label for="period">Range</label>
@@ -225,9 +258,25 @@
           </select>
         </div>
         <div>
+          <label for="threshold">Volatility Threshold</label>
+          <select id="threshold" name="threshold">
+            {% for value in threshold_options %}
+              <option value="{{ value }}" {% if value == selected_threshold %}selected{% endif %}>{{ value }}%</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
           <button type="submit">Analyze</button>
         </div>
       </form>
+
+      {% if recent_searches %}
+      <div class="recent">
+        {% for item in recent_searches %}
+          <a class="recent-item" href="/?query={{ item.query|urlencode }}&period={{ item.period }}&threshold={{ item.threshold }}">{{ item.query }} -> {{ item.ticker }} ({{ item.threshold }}%)</a>
+        {% endfor %}
+      </div>
+      {% endif %}
     </section>
 
     {% if error %}
@@ -237,35 +286,32 @@
     {% if result %}
     <section class="results">
       <div class="card">
-        <h2 class="ticker">{{ result.ticker }} <span class="pill">live snapshot</span></h2>
+        <h2 class="ticker">{{ result.ticker }} <span class="pill">{{ selected_period }} | {{ result.threshold_pct }}%</span></h2>
         <div class="stat-grid">
-          <div class="stat">
-            <span class="k">Company Name</span>
-            <span class="v">{% if result.company_name %}{{ result.company_name }}{% else %}Not available{% endif %}</span>
-          </div>
-          <div class="stat">
-            <span class="k">Company State</span>
-            <span class="v">{% if result.company_state %}{{ result.company_state }}{% else %}Not available{% endif %}</span>
-          </div>
-          <div class="stat">
-            <span class="k">Current Price</span>
-            <span class="v">{% if result.current_price is not none %}${{ "%.2f"|format(result.current_price) }}{% else %}Not available{% endif %}</span>
-          </div>
-          <div class="stat">
-            <span class="k">Last Dividend</span>
-            <span class="v">
-              {% if result.last_dividend is not none %}
-                ${{ "%.4f"|format(result.last_dividend) }} ({{ result.last_dividend_date }})
-              {% else %}
-                Not available
-              {% endif %}
-            </span>
-          </div>
+          <div class="stat"><span class="k">Company Name</span><span class="v">{{ result.company_name or "Not available" }}</span></div>
+          <div class="stat"><span class="k">Company State</span><span class="v">{{ result.company_state or "Not available" }}</span></div>
+          <div class="stat"><span class="k">Exchange / Currency</span><span class="v">{{ result.exchange or "N/A" }} / {{ result.currency or "N/A" }}</span></div>
+          <div class="stat"><span class="k">Current Price</span><span class="v">{% if result.current_price is not none %}{{ "%.2f"|format(result.current_price) }} {{ result.currency or "" }}{% else %}Not available{% endif %}</span></div>
+          <div class="stat"><span class="k">Last Dividend</span><span class="v">{% if result.last_dividend is not none %}{{ "%.4f"|format(result.last_dividend) }} {{ result.currency or "" }} ({{ result.last_dividend_date }}){% else %}Not available{% endif %}</span></div>
+          <div class="stat"><span class="k">Volatile Weeks</span><span class="v">{{ result.volatility_week_count }}</span></div>
+          <div class="stat"><span class="k">Max Weekly Gain</span><span class="v">{% if result.max_weekly_gain_pct is not none %}{{ "%.2f"|format(result.max_weekly_gain_pct) }}%{% else %}N/A{% endif %}</span></div>
+          <div class="stat"><span class="k">Max Weekly Loss</span><span class="v">{% if result.max_weekly_loss_pct is not none %}{{ "%.2f"|format(result.max_weekly_loss_pct) }}%{% else %}N/A{% endif %}</span></div>
+        </div>
+
+        <div class="small-actions">
+          <a class="subtle-btn" href="/export.csv?query={{ input_value|urlencode }}&period={{ selected_period }}&threshold={{ selected_threshold }}">Download CSV</a>
         </div>
       </div>
 
       <div class="card">
-        <h3 class="weeks-title">Weeks with More Than 5% Price Change</h3>
+        <h3>Price Trend (Weekly Close)</h3>
+        <div class="chart-wrap">
+          <canvas id="priceChart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Weeks with More Than {{ result.threshold_pct }}% Price Change</h3>
         {% if result.volatile_weeks %}
           <table>
             <thead>
@@ -278,17 +324,64 @@
               {% for week in result.volatile_weeks %}
                 <tr>
                   <td>{{ week.week_end }}</td>
-                  <td class="{% if week.change_pct.startswith('-') %}neg{% else %}pos{% endif %}">{{ week.change_pct }}</td>
+                  <td class="{% if week.change_value < 0 %}neg{% else %}pos{% endif %}">{{ week.change_pct }}</td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         {% else %}
-          <p class="empty">No weeks with movement greater than 5% in the selected period.</p>
+          <p class="empty">No weeks with movement greater than {{ result.threshold_pct }}% in the selected period.</p>
         {% endif %}
       </div>
     </section>
     {% endif %}
   </main>
+
+  {% if result %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const points = {{ result.weekly_price_points|tojson }};
+    const labels = points.map((p) => p.date);
+    const data = points.map((p) => p.close);
+    const pointColors = points.map((p) => p.is_volatile ? "#c2410c" : "#0a9396");
+
+    const ctx = document.getElementById("priceChart").getContext("2d");
+    new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "Weekly Close",
+          data,
+          borderColor: "#005f73",
+          backgroundColor: "rgba(0, 95, 115, 0.1)",
+          tension: 0.2,
+          fill: true,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          pointBackgroundColor: pointColors,
+        }]
+      },
+      options: {
+        maintainAspectRatio: false,
+        animation: { duration: 600 },
+        plugins: {
+          legend: { display: true },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return `${context.raw.toFixed(2)} {{ result.currency or '' }}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: { beginAtZero: false }
+        }
+      }
+    });
+  </script>
+  {% endif %}
 </body>
 </html>
