@@ -38,6 +38,10 @@
       margin-bottom: 0.8rem;
       border-bottom: 2px solid #0f766e;
       padding-bottom: 0.35rem;
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      align-items: center;
     }
     .topnav a {
       border: 0;
@@ -48,6 +52,31 @@
       padding: 0.45rem 0.7rem;
       border-radius: 8px;
       display: inline-block;
+    }
+    .topnav .ghost {
+      background: #f8fafc;
+      color: #334155;
+      border: 1px solid #dbe2ea;
+    }
+    .topnav .user-pill {
+      background: #f8fafc;
+      color: #334155;
+      border: 1px solid #dbe2ea;
+      border-radius: 8px;
+      padding: 0.45rem 0.7rem;
+      font-weight: 800;
+      font-size: 0.9rem;
+    }
+    .topnav .spacer { flex: 1; }
+    .inline-form { margin: 0; display: inline; }
+    .logout-btn {
+      border: 1px solid #dbe2ea;
+      color: #334155;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 0.45rem 0.7rem;
+      font-weight: 800;
+      cursor: pointer;
     }
     .hero, .card {
       background: var(--panel);
@@ -257,6 +286,18 @@
       padding: 0.35rem 0.65rem;
       font-size: 0.84rem;
     }
+    .watch-actions {
+      margin-top: 0.8rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .watch-title {
+      font-size: 0.84rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
     @keyframes fade-slide {
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
@@ -278,6 +319,17 @@
   <main class="page">
     <nav class="topnav" aria-label="Primary">
       <a href="/markets">Markets</a>
+      {% if current_user %}
+        <span class="user-pill">User: {{ current_user.username }}</span>
+        <div class="spacer"></div>
+        <form class="inline-form" method="post" action="/logout">
+          <button class="logout-btn" type="submit">Logout</button>
+        </form>
+      {% else %}
+        <div class="spacer"></div>
+        <a class="ghost" href="/login">Login</a>
+        <a class="ghost" href="/register">Register</a>
+      {% endif %}
     </nav>
 
     <section class="hero">
@@ -337,6 +389,15 @@
         {% endfor %}
       </div>
       {% endif %}
+
+      {% if current_user and watchlist %}
+      <div class="watch-actions">
+        <span class="watch-title">Watchlist:</span>
+        {% for symbol in watchlist %}
+          <a class="recent-item" href="/?query={{ symbol|urlencode }}&period={{ selected_period }}&threshold={{ selected_threshold }}&granularity={{ selected_granularity }}">{{ symbol }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
     </section>
 
     {% if error %}
@@ -360,6 +421,19 @@
 
         <div class="small-actions">
           <a class="subtle-btn" href="/export.csv?query={{ input_value|urlencode }}&period={{ selected_period }}&threshold={{ selected_threshold }}&granularity={{ selected_granularity }}">Download CSV</a>
+          {% if current_user %}
+            {% if result.ticker in watchlist %}
+              <form method="post" action="/watchlist/remove" class="inline-form">
+                <input type="hidden" name="symbol" value="{{ result.ticker }}">
+                <button type="submit" class="subtle-btn">Remove from Watchlist</button>
+              </form>
+            {% else %}
+              <form method="post" action="/watchlist/add" class="inline-form">
+                <input type="hidden" name="symbol" value="{{ result.ticker }}">
+                <button type="submit" class="subtle-btn">Add to Watchlist</button>
+              </form>
+            {% endif %}
+          {% endif %}
         </div>
       </div>
 

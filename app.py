@@ -8,18 +8,23 @@ import math
 import os
 import random
 import re
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from typing import Optional
 
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
-from flask import Flask, jsonify, make_response, render_template, request
+from flask import Flask, jsonify, make_response, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 from yfinance.exceptions import YFRateLimitError
 
 app = Flask(__name__)
 app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "0") == "1"
+app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-only-change-me")
+DB_PATH = os.path.join(os.path.dirname(__file__), "app.db")
 
 PERIOD_OPTIONS = [
     ("1d", "1D"),
@@ -83,6 +88,87 @@ class AnalysisResult:
     max_weekly_gain_pct: Optional[float]
     max_weekly_loss_pct: Optional[float]
     granularity: str
+
+
+def _db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with _db_connect() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, symbol),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            """
+        )
+
+
+def _get_current_user() -> Optional[dict[str, str | int]]:
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    with _db_connect() as conn:
+        row = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        session.clear()
+        return None
+    return {"id": int(row["id"]), "username": str(row["username"])}
+
+
+def _watchlist_symbols(user_id: int) -> list[str]:
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT symbol FROM watchlist WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [str(r["symbol"]) for r in rows]
+
+
+def _watchlist_add(user_id: int, symbol: str):
+    clean_symbol = _normalize_symbol(symbol)
+    if not clean_symbol:
+        return
+    with _db_connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO watchlist(user_id, symbol) VALUES(?, ?)",
+            (user_id, clean_symbol),
+        )
+        conn.commit()
+
+
+def _watchlist_remove(user_id: int, symbol: str):
+    clean_symbol = _normalize_symbol(symbol)
+    if not clean_symbol:
+        return
+    with _db_connect() as conn:
+        conn.execute("DELETE FROM watchlist WHERE user_id = ? AND symbol = ?", (user_id, clean_symbol))
+        conn.commit()
+
+
+def _login_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login", next=request.path))
+        return func(*args, **kwargs)
+
+    return wrapper
 
 
 def _fetch_screen_live(query_name: str, size: int = 25, retries: int = 3) -> list[dict]:
@@ -968,10 +1054,97 @@ def _export_csv_response(result: AnalysisResult, query: str) -> tuple[str, int]:
     return response
 
 
+init_db()
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    error: Optional[str] = None
+    username = ""
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if len(username) < 3:
+            error = "Username must have at least 3 characters."
+        elif len(password) < 6:
+            error = "Password must have at least 6 characters."
+        elif password != confirm:
+            error = "Passwords do not match."
+        else:
+            try:
+                with _db_connect() as conn:
+                    conn.execute(
+                        "INSERT INTO users(username, password_hash) VALUES(?, ?)",
+                        (username, generate_password_hash(password)),
+                    )
+                    conn.commit()
+                    row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+                session["user_id"] = int(row["id"])
+                return redirect(url_for("index"))
+            except sqlite3.IntegrityError:
+                error = "Username already exists."
+
+    return render_template("register.html", error=error, username=username)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error: Optional[str] = None
+    username = ""
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        next_url = request.args.get("next") or url_for("index")
+
+        with _db_connect() as conn:
+            row = conn.execute(
+                "SELECT id, password_hash FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+
+        if not row or not check_password_hash(str(row["password_hash"]), password):
+            error = "Invalid username or password."
+        else:
+            session["user_id"] = int(row["id"])
+            return redirect(next_url)
+
+    return render_template("login.html", error=error, username=username)
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("index"))
+
+
+@app.post("/watchlist/add")
+@_login_required
+def watchlist_add():
+    user = _get_current_user()
+    if user:
+        _watchlist_add(int(user["id"]), request.form.get("symbol", ""))
+    return redirect(request.referrer or url_for("index"))
+
+
+@app.post("/watchlist/remove")
+@_login_required
+def watchlist_remove():
+    user = _get_current_user()
+    if user:
+        _watchlist_remove(int(user["id"]), request.form.get("symbol", ""))
+    return redirect(request.referrer or url_for("index"))
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     result: Optional[AnalysisResult] = None
     error: Optional[str] = None
+    current_user = _get_current_user()
+    watchlist: list[str] = _watchlist_symbols(int(current_user["id"])) if current_user else []
 
     input_value = ""
     selected_period = "1y"
@@ -1037,6 +1210,8 @@ def index():
         "index.html",
         result=result,
         error=error,
+        current_user=current_user,
+        watchlist=watchlist,
         period_options=PERIOD_OPTIONS,
         selected_period=selected_period,
         threshold_options=THRESHOLD_OPTIONS,
