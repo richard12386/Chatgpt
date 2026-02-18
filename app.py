@@ -12,6 +12,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from threading import Event, Lock, Thread
 from typing import Optional
 
 import requests
@@ -42,11 +43,18 @@ THRESHOLD_OPTIONS = WEEK_THRESHOLD_OPTIONS
 GRANULARITY_OPTIONS = [("week", "Week End"), ("day", "Every Day")]
 CACHE_TTL_SECONDS = 900
 STALE_CACHE_MAX_AGE_SECONDS = 21600
+SEARCH_CACHE_TTL_SECONDS = 43200
+AUTO_REFRESH_INTERVAL_SECONDS = 60
 MAX_RECENT_SEARCHES = 8
 
 ANALYSIS_CACHE: dict[tuple[str, str, int, str], tuple[float, "AnalysisResult"]] = {}
+SEARCH_CACHE: dict[str, tuple[float, str]] = {}
 RECENT_SEARCHES: deque[dict[str, str]] = deque(maxlen=MAX_RECENT_SEARCHES)
 LAST_MARKET_OVERVIEW: Optional[dict] = None
+AUTO_REFRESH_STOP = Event()
+AUTO_REFRESH_LOCK = Lock()
+AUTO_REFRESH_THREAD: Optional[Thread] = None
+AUTO_REFRESH_LAST_RUN_AT: Optional[float] = None
 
 # Global-ish liquid tickers (US + EU + Asia) in Yahoo symbol format.
 MARKET_URLS = {
@@ -68,6 +76,59 @@ GOOGLE_FINANCE_URLS = {
     "most_active": "https://www.google.com/finance/markets/most-active",
     "gainers": "https://www.google.com/finance/markets/gainers",
     "losers": "https://www.google.com/finance/markets/losers",
+}
+
+COUNTRY_CODE_MAP = {
+    "USA": "United States",
+    "US": "United States",
+    "GB": "United Kingdom",
+    "DE": "Germany",
+    "FR": "France",
+    "ES": "Spain",
+    "IT": "Italy",
+    "NL": "Netherlands",
+    "SE": "Sweden",
+    "NO": "Norway",
+    "DK": "Denmark",
+    "FI": "Finland",
+    "CH": "Switzerland",
+    "AT": "Austria",
+    "BE": "Belgium",
+    "IE": "Ireland",
+    "CA": "Canada",
+    "AU": "Australia",
+    "NZ": "New Zealand",
+    "JP": "Japan",
+    "CN": "China",
+    "HK": "Hong Kong",
+    "SG": "Singapore",
+    "IN": "India",
+    "KR": "South Korea",
+    "TW": "Taiwan",
+    "BR": "Brazil",
+    "MX": "Mexico",
+    "ZA": "South Africa",
+}
+SYMBOL_COUNTRY_SUFFIX_MAP = {
+    "PA": "France",
+    "DE": "Germany",
+    "AS": "Netherlands",
+    "MI": "Italy",
+    "MC": "Spain",
+    "L": "United Kingdom",
+    "TO": "Canada",
+    "V": "Canada",
+    "AX": "Australia",
+    "HK": "Hong Kong",
+    "T": "Japan",
+    "KS": "South Korea",
+    "KQ": "South Korea",
+    "SS": "China",
+    "SZ": "China",
+    "TW": "Taiwan",
+    "NS": "India",
+    "BO": "India",
+    "SI": "Singapore",
 }
 
 
@@ -115,6 +176,12 @@ def init_db():
                 UNIQUE(user_id, symbol),
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS symbol_cache (
+                query_key TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                updated_ts REAL NOT NULL
+            );
             """
         )
 
@@ -159,6 +226,78 @@ def _watchlist_remove(user_id: int, symbol: str):
     with _db_connect() as conn:
         conn.execute("DELETE FROM watchlist WHERE user_id = ? AND symbol = ?", (user_id, clean_symbol))
         conn.commit()
+
+
+def _known_symbols() -> list[str]:
+    symbols: set[str] = set()
+
+    with _db_connect() as conn:
+        rows = conn.execute("SELECT DISTINCT symbol FROM watchlist").fetchall()
+        symbols.update(_normalize_symbol(str(r["symbol"])) for r in rows if r["symbol"])
+        rows = conn.execute("SELECT DISTINCT symbol FROM symbol_cache").fetchall()
+        symbols.update(_normalize_symbol(str(r["symbol"])) for r in rows if r["symbol"])
+
+    for (ticker, _, _, _), _cached in ANALYSIS_CACHE.items():
+        symbols.add(_normalize_symbol(str(ticker)))
+
+    return [s for s in symbols if s]
+
+
+def refresh_all_known_companies_once():
+    global AUTO_REFRESH_LAST_RUN_AT
+
+    symbols = _known_symbols()
+    if not symbols:
+        AUTO_REFRESH_LAST_RUN_AT = time.time()
+        return
+
+    now = time.time()
+    refreshed_any = False
+
+    for symbol in symbols:
+        keys_for_symbol = [k for k in ANALYSIS_CACHE.keys() if k[0] == symbol]
+        if not keys_for_symbol:
+            keys_for_symbol = [(symbol, "1y", 5, "week")]
+
+        for _ticker, period, threshold_pct, granularity in keys_for_symbol:
+            try:
+                fresh = get_stock_analysis_http(
+                    ticker_symbol=symbol,
+                    period=period,
+                    threshold_pct=threshold_pct,
+                    granularity=granularity,
+                )
+                ANALYSIS_CACHE[(symbol, period, threshold_pct, granularity)] = (now, fresh)
+                refreshed_any = True
+            except Exception:
+                # Keep old cache entry if refresh fails for one symbol.
+                continue
+
+    if refreshed_any:
+        app.logger.info("Auto refresh completed for %s symbols.", len(symbols))
+    AUTO_REFRESH_LAST_RUN_AT = time.time()
+
+
+def _auto_refresh_worker():
+    while not AUTO_REFRESH_STOP.is_set():
+        # Wait first, then refresh, to avoid blocking app startup.
+        if AUTO_REFRESH_STOP.wait(AUTO_REFRESH_INTERVAL_SECONDS):
+            break
+        if not AUTO_REFRESH_LOCK.acquire(blocking=False):
+            continue
+        try:
+            refresh_all_known_companies_once()
+        finally:
+            AUTO_REFRESH_LOCK.release()
+
+
+def start_auto_refresh():
+    global AUTO_REFRESH_THREAD
+    if AUTO_REFRESH_THREAD and AUTO_REFRESH_THREAD.is_alive():
+        return
+    AUTO_REFRESH_STOP.clear()
+    AUTO_REFRESH_THREAD = Thread(target=_auto_refresh_worker, daemon=True, name="auto-refresh")
+    AUTO_REFRESH_THREAD.start()
 
 
 def _login_required(func):
@@ -247,6 +386,69 @@ def _search_symbol_by_name_http(query: str) -> str:
     raise ValueError(f"No ticker found for company name '{query}'.")
 
 
+def _is_probable_ticker(query: str) -> bool:
+    # Fast heuristic: ticker-like inputs are short and use market symbol characters.
+    clean = query.strip().upper()
+    if not clean or len(clean) > 10:
+        return False
+    return bool(re.fullmatch(r"[A-Z0-9.\-:=]+", clean))
+
+
+def _get_search_cache(query: str) -> Optional[str]:
+    key = query.strip().lower()
+    if not key:
+        return None
+
+    now = time.time()
+    cached = SEARCH_CACHE.get(key)
+    if cached:
+        cached_at, symbol = cached
+        if now - cached_at <= SEARCH_CACHE_TTL_SECONDS:
+            return symbol
+        SEARCH_CACHE.pop(key, None)
+
+    # Persistent cache fallback (survives app restarts).
+    with _db_connect() as conn:
+        row = conn.execute(
+            "SELECT symbol, updated_ts FROM symbol_cache WHERE query_key = ?",
+            (key,),
+        ).fetchone()
+    if not row:
+        return None
+
+    updated_ts = float(row["updated_ts"])
+    if now - updated_ts > SEARCH_CACHE_TTL_SECONDS:
+        with _db_connect() as conn:
+            conn.execute("DELETE FROM symbol_cache WHERE query_key = ?", (key,))
+            conn.commit()
+        return None
+
+    symbol = str(row["symbol"]).upper()
+    SEARCH_CACHE[key] = (updated_ts, symbol)
+    return symbol
+
+
+def _set_search_cache(query: str, symbol: str):
+    key = query.strip().lower()
+    if not key:
+        return
+    now = time.time()
+    normalized_symbol = symbol.upper()
+    SEARCH_CACHE[key] = (now, normalized_symbol)
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO symbol_cache(query_key, symbol, updated_ts)
+            VALUES(?, ?, ?)
+            ON CONFLICT(query_key) DO UPDATE SET
+                symbol = excluded.symbol,
+                updated_ts = excluded.updated_ts
+            """,
+            (key, normalized_symbol, now),
+        )
+        conn.commit()
+
+
 def _to_number_with_suffix(raw_value: str) -> float:
     raw = (raw_value or "").replace(",", "").strip()
     match = re.match(r"^([+-]?\d+(?:\.\d+)?)([KMBT]?)$", raw, re.IGNORECASE)
@@ -281,6 +483,50 @@ def _normalize_symbol(raw_symbol: str) -> str:
     return symbol
 
 
+def _normalize_country(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    code = raw.upper()
+    return COUNTRY_CODE_MAP.get(code, raw)
+
+
+def _format_location(state: Optional[str], country: Optional[str], region: Optional[str] = None) -> Optional[str]:
+    state_clean = str(state).strip() if state else None
+    country_clean = _normalize_country(country) or _normalize_country(region)
+    if state_clean and country_clean:
+        return f"{state_clean}, {country_clean}"
+    if country_clean:
+        return country_clean
+    if state_clean:
+        return state_clean
+    return None
+
+
+def _country_from_symbol(symbol: str) -> Optional[str]:
+    clean = _normalize_symbol(symbol)
+    if not clean:
+        return None
+    if "." in clean:
+        suffix = clean.rsplit(".", 1)[1].upper()
+        mapped = SYMBOL_COUNTRY_SUFFIX_MAP.get(suffix)
+        if mapped:
+            return mapped
+    # Default heuristic for common plain tickers.
+    return "United States"
+
+
+def _country_suffix_groups() -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for suffix, country in SYMBOL_COUNTRY_SUFFIX_MAP.items():
+        grouped.setdefault(country, []).append(f".{suffix}")
+    for country in grouped:
+        grouped[country] = sorted(grouped[country])
+    return dict(sorted(grouped.items(), key=lambda x: x[0]))
+
+
 def _scrape_market_table(url: str, retries: int = 1) -> list[dict]:
     delay = 0.8
     for attempt in range(retries):
@@ -305,6 +551,7 @@ def _scrape_market_table(url: str, retries: int = 1) -> list[dict]:
                     "change_pct": change_pct,
                     "volume": int(_to_number_with_suffix(cells[6])),
                     "exchange": None,
+                    "country": None,
                     "currency": None,
                     "market_cap": _to_number_with_suffix(cells[8]),
                     "source": "yahoo",
@@ -346,6 +593,7 @@ def _scrape_finviz_table(url: str, retries: int = 1) -> list[dict]:
                         "change_pct": _extract_change_pct(cells[9]),
                         "volume": int(_to_number_with_suffix(cells[10])),
                         "exchange": None,
+                        "country": cells[5] or None,
                         "currency": None,
                         "market_cap": _to_number_with_suffix(cells[6]),
                         "source": "finviz",
@@ -391,6 +639,7 @@ def _scrape_tradingview_table(url: str, retries: int = 1) -> list[dict]:
                         "change_pct": _extract_change_pct(cells[1] if len(cells) > 1 else ""),
                         "volume": int(_to_number_with_suffix(cells[3] if len(cells) > 3 else "0")),
                         "exchange": None,
+                        "country": None,
                         "currency": "USD",
                         "market_cap": _to_number_with_suffix(cells[5] if len(cells) > 5 else "0"),
                         "source": "tradingview",
@@ -436,6 +685,7 @@ def _scrape_google_finance_table(url: str, retries: int = 1) -> list[dict]:
                         "change_pct": _extract_change_pct(cells[2] if len(cells) > 2 else ""),
                         "volume": int(_to_number_with_suffix(cells[3] if len(cells) > 3 else "0")),
                         "exchange": None,
+                        "country": None,
                         "currency": None,
                         "market_cap": 0.0,
                         "source": "google_finance",
@@ -474,6 +724,8 @@ def _merge_market_rows(*sources: list[dict]) -> list[dict]:
                 existing["market_cap"] = row.get("market_cap")
             if not existing.get("exchange") and row.get("exchange"):
                 existing["exchange"] = row.get("exchange")
+            if not existing.get("country") and row.get("country"):
+                existing["country"] = row.get("country")
             if not existing.get("currency") and row.get("currency"):
                 existing["currency"] = row.get("currency")
             if existing.get("source") and row.get("source") and row["source"] not in existing["source"]:
@@ -492,6 +744,7 @@ def _to_market_row(quote: dict) -> Optional[dict]:
         "change_pct": quote.get("regularMarketChangePercent"),
         "volume": quote.get("regularMarketVolume") or 0,
         "exchange": quote.get("exchange") or quote.get("fullExchangeName"),
+        "country": _normalize_country(quote.get("country") or quote.get("region")),
         "currency": quote.get("currency"),
         "market_cap": quote.get("marketCap") or 0,
         "source": "yahoo",
@@ -615,6 +868,10 @@ def _history_with_retry(
 
 
 def _search_symbol_by_name(query: str, retries: int = 5, initial_delay: float = 1.2) -> str:
+    cached_symbol = _get_search_cache(query)
+    if cached_symbol:
+        return cached_symbol
+
     delay = initial_delay
     for attempt in range(retries):
         try:
@@ -623,13 +880,37 @@ def _search_symbol_by_name(query: str, retries: int = 5, initial_delay: float = 
             for quote in quotes:
                 symbol = quote.get("symbol")
                 if symbol:
-                    return str(symbol).upper()
+                    resolved = str(symbol).upper()
+                    _set_search_cache(query, resolved)
+                    return resolved
             raise ValueError(f"No ticker found for company name '{query}'.")
         except YFRateLimitError:
             if attempt == retries - 1:
-                return _search_symbol_by_name_http(query)
+                resolved = _search_symbol_by_name_http(query)
+                _set_search_cache(query, resolved)
+                return resolved
             time.sleep(delay + random.uniform(0.0, 0.4))
             delay *= 2
+
+
+def _resolve_input_symbol(input_value: str) -> str:
+    raw = input_value.strip()
+    if _is_probable_ticker(raw):
+        return raw.upper()
+
+    cached_symbol = _get_search_cache(raw)
+    if cached_symbol:
+        return cached_symbol
+
+    # Prefer lightweight HTTP search first for company names.
+    try:
+        resolved = _search_symbol_by_name_http(raw)
+        _set_search_cache(raw, resolved)
+        return resolved
+    except Exception:
+        resolved = _search_symbol_by_name(raw)
+        _set_search_cache(raw, resolved)
+        return resolved
 
 
 def _normalize_period(requested_period: str) -> str:
@@ -819,7 +1100,12 @@ def get_stock_analysis_http(
         asset_profile = {}
 
     company_name = quote_row.get("longName") or quote_row.get("shortName")
-    company_state = asset_profile.get("state") or asset_profile.get("country")
+    company_state = _format_location(
+        asset_profile.get("state"),
+        asset_profile.get("country") or quote_row.get("country"),
+        quote_row.get("region"),
+    )
+    company_state = company_state or _country_from_symbol(ticker_symbol)
     currency = quote_row.get("currency") or meta.get("currency")
     exchange = quote_row.get("exchange") or quote_row.get("fullExchangeName") or meta.get("exchangeName")
 
@@ -935,7 +1221,7 @@ def get_stock_analysis(
     try:
         info = ticker.info or {}
         company_name = info.get("longName") or info.get("shortName")
-        company_state = info.get("state")
+        company_state = _format_location(info.get("state"), info.get("country"))
         currency = info.get("currency")
         exchange = info.get("exchange")
     except Exception:
@@ -943,6 +1229,25 @@ def get_stock_analysis(
         company_state = None
         currency = None
         exchange = None
+
+    # Fallback profile from lightweight quote endpoint when yfinance.info is empty/unavailable.
+    if not company_name or not company_state or not currency or not exchange:
+        try:
+            quote_payload = _request_json_with_retry(
+                "https://query1.finance.yahoo.com/v7/finance/quote",
+                {"symbols": ticker_symbol},
+            )
+            quote_rows = ((quote_payload.get("quoteResponse") or {}).get("result")) or []
+            quote_row = quote_rows[0] if quote_rows else {}
+            company_name = company_name or quote_row.get("longName") or quote_row.get("shortName")
+            company_state = company_state or _format_location(
+                None, quote_row.get("country"), quote_row.get("region")
+            )
+            currency = currency or quote_row.get("currency")
+            exchange = exchange or quote_row.get("exchange") or quote_row.get("fullExchangeName")
+        except Exception:
+            pass
+    company_state = company_state or _country_from_symbol(ticker_symbol)
 
     return AnalysisResult(
         ticker=ticker_symbol.upper(),
@@ -1010,21 +1315,13 @@ def _analyze_input(
     granularity: str = "week",
     record_history: bool = True,
 ) -> AnalysisResult:
-    try:
-        result = get_stock_analysis_cached(
-            input_value.upper(),
-            period=period,
-            threshold_pct=threshold_pct,
-            granularity=granularity,
-        )
-    except ValueError:
-        resolved_ticker = _search_symbol_by_name(input_value)
-        result = get_stock_analysis_cached(
-            resolved_ticker,
-            period=period,
-            threshold_pct=threshold_pct,
-            granularity=granularity,
-        )
+    resolved_ticker = _resolve_input_symbol(input_value)
+    result = get_stock_analysis_cached(
+        resolved_ticker,
+        period=period,
+        threshold_pct=threshold_pct,
+        granularity=granularity,
+    )
 
     if record_history:
         _record_recent_search(input_value, result.ticker, period, threshold_pct, granularity)
@@ -1222,6 +1519,8 @@ def index():
         selected_granularity=selected_granularity,
         input_value=input_value,
         recent_searches=list(RECENT_SEARCHES),
+        symbol_country_suffix_map=dict(sorted(SYMBOL_COUNTRY_SUFFIX_MAP.items(), key=lambda x: x[0])),
+        country_suffix_groups=_country_suffix_groups(),
     )
 
 
@@ -1267,8 +1566,12 @@ def health():
         timestamp=int(time.time()),
         cache_entries=len(ANALYSIS_CACHE),
         recent_searches=len(RECENT_SEARCHES),
+        auto_refresh_running=bool(AUTO_REFRESH_THREAD and AUTO_REFRESH_THREAD.is_alive()),
+        auto_refresh_interval_seconds=AUTO_REFRESH_INTERVAL_SECONDS,
+        auto_refresh_last_run_at=int(AUTO_REFRESH_LAST_RUN_AT) if AUTO_REFRESH_LAST_RUN_AT else None,
     )
 
 
 if __name__ == "__main__":
+    start_auto_refresh()
     app.run(debug=app.config["DEBUG"])

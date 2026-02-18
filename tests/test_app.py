@@ -77,46 +77,40 @@ class RouteTests(unittest.TestCase):
         self.assertIn("6.10%", body)
         analysis_mock.assert_called_once_with("AAPL", period="1y", threshold_pct=5, granularity="week")
 
-    @patch("app._search_symbol_by_name")
+    @patch("app._resolve_input_symbol")
     @patch("app.get_stock_analysis_cached")
     def test_post_company_name_uses_search_fallback(
-        self, analysis_mock: Mock, search_mock: Mock
+        self, analysis_mock: Mock, resolve_mock: Mock
     ):
-        search_mock.return_value = "HO.PA"
-        analysis_mock.side_effect = [
-            ValueError("No price data found for this ticker."),
-            app.AnalysisResult(
-                ticker="HO.PA",
-                company_name="Thales S.A.",
-                company_state=None,
-                currency="EUR",
-                exchange="PAR",
-                current_price=150.0,
-                last_dividend=1.0,
-                last_dividend_date="2026-01-01",
-                threshold_pct=5,
-                volatile_weeks=[],
-                weekly_price_points=[],
-                volatility_week_count=0,
-                max_weekly_gain_pct=None,
-                max_weekly_loss_pct=None,
-                granularity="week",
-            ),
-        ]
+        resolve_mock.return_value = "HO.PA"
+        analysis_mock.return_value = app.AnalysisResult(
+            ticker="HO.PA",
+            company_name="Thales S.A.",
+            company_state=None,
+            currency="EUR",
+            exchange="PAR",
+            current_price=150.0,
+            last_dividend=1.0,
+            last_dividend_date="2026-01-01",
+            threshold_pct=5,
+            volatile_weeks=[],
+            weekly_price_points=[],
+            volatility_week_count=0,
+            max_weekly_gain_pct=None,
+            max_weekly_loss_pct=None,
+            granularity="week",
+        )
 
         response = self.client.post("/", data={"ticker": "Thales", "period": "2y", "threshold": "5"})
         body = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Thales S.A.", body)
-        search_mock.assert_called_once_with("Thales")
-        self.assertEqual(analysis_mock.call_count, 2)
-        self.assertEqual(analysis_mock.call_args_list[0].args[0], "THALES")
-        self.assertEqual(analysis_mock.call_args_list[1].args[0], "HO.PA")
-        self.assertEqual(analysis_mock.call_args_list[0].kwargs["threshold_pct"], 5)
-        self.assertEqual(analysis_mock.call_args_list[1].kwargs["threshold_pct"], 5)
-        self.assertEqual(analysis_mock.call_args_list[0].kwargs["granularity"], "week")
-        self.assertEqual(analysis_mock.call_args_list[1].kwargs["granularity"], "week")
+        resolve_mock.assert_called_once_with("Thales")
+        analysis_mock.assert_called_once()
+        self.assertEqual(analysis_mock.call_args.args[0], "HO.PA")
+        self.assertEqual(analysis_mock.call_args.kwargs["threshold_pct"], 5)
+        self.assertEqual(analysis_mock.call_args.kwargs["granularity"], "week")
 
     @patch("app._analyze_input")
     def test_export_csv_returns_attachment(self, analyze_mock: Mock):

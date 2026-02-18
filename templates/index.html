@@ -271,6 +271,100 @@
       padding: 0.75rem;
       background: #fff;
     }
+    .info-card { margin-top: 1rem; }
+    .info-head {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.55rem;
+    }
+    .info-title {
+      font-weight: 800;
+      font-size: 1rem;
+      letter-spacing: 0.02em;
+    }
+    .help-dot {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.1rem;
+      height: 1.1rem;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #0f172a;
+      font-size: 0.72rem;
+      font-weight: 800;
+      cursor: help;
+      border: 1px solid #cbd5e1;
+    }
+    .more-btn {
+      margin-left: auto;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #0f172a;
+      border-radius: 10px;
+      padding: 0.34rem 0.58rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .info-body[hidden] { display: none; }
+    .tab-row {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.6rem;
+    }
+    .tab-btn {
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      color: #334155;
+      border-radius: 999px;
+      padding: 0.3rem 0.56rem;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: #e0f2fe;
+      border-color: #7dd3fc;
+      color: #0c4a6e;
+    }
+    .info-pane[hidden] { display: none; }
+    .mini-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+      font-size: 0.84rem;
+    }
+    .mini-table th, .mini-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 0.42rem 0.52rem;
+      text-align: left;
+    }
+    .mini-table tr:last-child td { border-bottom: 0; }
+    .mini-table th {
+      background: #f8fafc;
+      font-size: 0.74rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #334155;
+    }
+    #worldMap {
+      width: 100%;
+      min-height: 360px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .map-note {
+      margin-top: 0.5rem;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }
     .recent {
       margin-top: 0.85rem;
       display: flex;
@@ -400,6 +494,41 @@
       {% endif %}
     </section>
 
+    <section class="card info-card">
+      <div class="info-head">
+        <span class="info-title">SYMBOL_COUNTRY_SUFFIX_MAP</span>
+        <span class="help-dot" title="Suffix map for stock symbols. Hover country on map to see suffixes.">?</span>
+        <button id="moreInfoBtn" class="more-btn" type="button">More info</button>
+      </div>
+      <div id="infoBody" class="info-body" hidden>
+        <div class="tab-row">
+          <button class="tab-btn active" type="button" data-target="suffixListPane">List</button>
+          <button class="tab-btn" type="button" data-target="worldMapPane">World Map</button>
+        </div>
+
+        <div id="suffixListPane" class="info-pane">
+          <table class="mini-table">
+            <thead>
+              <tr><th>Suffix</th><th>Country</th></tr>
+            </thead>
+            <tbody>
+              {% for suffix, country in symbol_country_suffix_map.items() %}
+              <tr>
+                <td>.{{ suffix }}</td>
+                <td>{{ country }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div id="worldMapPane" class="info-pane" hidden>
+          <div id="worldMap"></div>
+          <p id="mapHoverNote" class="map-note">Hover on a country to see name (ENG) and suffixes.</p>
+        </div>
+      </div>
+    </section>
+
     {% if error %}
       <div class="error">{{ error }}</div>
     {% endif %}
@@ -410,7 +539,7 @@
         <h2 class="ticker">{{ result.ticker }} <span class="pill">{{ selected_period }} | {{ selected_granularity }} | {{ result.threshold_pct }}%</span></h2>
         <div class="stat-grid">
           <div class="stat"><span class="k">Company Name</span><span class="v">{{ result.company_name or "Not available" }}</span></div>
-          <div class="stat"><span class="k">Company State</span><span class="v">{{ result.company_state or "Not available" }}</span></div>
+          <div class="stat"><span class="k">Country / State</span><span class="v">{{ result.company_state or "N/A" }}</span></div>
           <div class="stat"><span class="k">Exchange / Currency</span><span class="v">{{ result.exchange or "N/A" }} / {{ result.currency or "N/A" }}</span></div>
           <div class="stat"><span class="k">Current Price</span><span class="v">{% if result.current_price is not none %}{{ "%.2f"|format(result.current_price) }} {{ result.currency or "" }}{% else %}Not available{% endif %}</span></div>
           <div class="stat"><span class="k">Last Dividend</span><span class="v">{% if result.last_dividend is not none %}{{ "%.4f"|format(result.last_dividend) }} {{ result.currency or "" }} ({{ result.last_dividend_date }}){% else %}Not available{% endif %}</span></div>
@@ -488,6 +617,7 @@
           label: "{% if selected_granularity == 'week' %}Week End Close{% elif selected_period == '1d' %}Hourly Close{% else %}Daily Close{% endif %}",
           data,
           borderColor: "#005f73",
+          borderWidth: 1,
           backgroundColor: "rgba(0, 95, 115, 0.1)",
           tension: 0.2,
           fill: true,
@@ -517,6 +647,8 @@
     });
   </script>
   {% endif %}
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap/dist/maps/world.js"></script>
 <script>
   (function () {
     const granularityInputs = document.querySelectorAll('input[name="granularity"]');
@@ -549,6 +681,79 @@
 
     granularityInputs.forEach((input) => input.addEventListener("change", applyThresholdVisibility));
     applyThresholdVisibility();
+  })();
+</script>
+<script>
+  (function () {
+    const moreBtn = document.getElementById("moreInfoBtn");
+    const infoBody = document.getElementById("infoBody");
+    const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
+    const panes = Array.from(document.querySelectorAll(".info-pane"));
+    const mapNote = document.getElementById("mapHoverNote");
+    const countrySuffixGroups = {{ country_suffix_groups|tojson }};
+    let mapInitialized = false;
+    let mapObj = null;
+
+    function activateTab(targetId) {
+      tabButtons.forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.target === targetId);
+      });
+      panes.forEach((pane) => {
+        pane.hidden = pane.id !== targetId;
+      });
+      if (targetId === "worldMapPane") {
+        initMapIfNeeded();
+      }
+    }
+
+    function initMapIfNeeded() {
+      if (mapInitialized) return;
+      const mapEl = document.getElementById("worldMap");
+      if (!mapEl || typeof jsVectorMap === "undefined") {
+        if (mapNote) mapNote.textContent = "World map library could not be loaded.";
+        return;
+      }
+
+      mapObj = new jsVectorMap({
+        selector: "#worldMap",
+        map: "world",
+        zoomButtons: true,
+        regionStyle: {
+          initial: {
+            fill: "#dbeafe",
+            stroke: "#94a3b8",
+            strokeWidth: 0.6,
+          },
+          hover: {
+            fill: "#7dd3fc",
+          },
+        },
+        onRegionTooltipShow(event, tooltip, code) {
+          const name = mapObj.getRegionName(code) || code;
+          const suffixes = countrySuffixGroups[name] || [];
+          const suffixText = suffixes.length ? suffixes.join(", ") : "N/A";
+          tooltip.text(`${name} | SYMBOL_COUNTRY_SUFFIX_MAP: ${suffixText}`);
+          if (mapNote) {
+            mapNote.textContent = `${name} (ENG) -> SYMBOL_COUNTRY_SUFFIX_MAP: ${suffixText}`;
+          }
+        },
+      });
+
+      mapInitialized = true;
+    }
+
+    if (moreBtn && infoBody) {
+      moreBtn.addEventListener("click", () => {
+        infoBody.hidden = !infoBody.hidden;
+        if (!infoBody.hidden) {
+          activateTab("suffixListPane");
+        }
+      });
+    }
+
+    tabButtons.forEach((btn) => {
+      btn.addEventListener("click", () => activateTab(btn.dataset.target));
+    });
   })();
 </script>
 </body>

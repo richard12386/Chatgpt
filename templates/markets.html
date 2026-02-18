@@ -60,32 +60,40 @@
       font-size: 1.02rem;
       letter-spacing: 0.02em;
     }
-    .market-list {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-      display: grid;
-      gap: 0.35rem;
-    }
-    .market-item {
-      display: grid;
-      grid-template-columns: 1fr auto auto;
-      gap: 0.45rem;
-      align-items: center;
+    .market-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
       border: 1px solid var(--line);
       border-radius: 10px;
-      padding: 0.44rem 0.56rem;
-      background: #fff;
-      font-size: 0.9rem;
-    }
-    .market-item .sym { font-weight: 800; }
-    .market-item .nm {
-      color: var(--muted);
       overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
+      font-size: 0.86rem;
     }
-    .market-item .meta { font-weight: 700; font-size: 0.8rem; }
+    .market-table th,
+    .market-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 0.42rem 0.46rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    .market-table tr:last-child td { border-bottom: 0; }
+    .market-table th {
+      background: #f7fafc;
+      color: #334155;
+      font-weight: 800;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .sym { font-weight: 800; white-space: nowrap; }
+    .nm { color: var(--muted); }
+    .ct { color: #0f766e; font-weight: 700; white-space: nowrap; }
+    .meta { font-weight: 700; font-size: 0.82rem; white-space: nowrap; }
+    .empty-row {
+      color: var(--muted);
+      text-align: center;
+      font-style: italic;
+    }
     .pos { color: var(--good); }
     .neg { color: var(--bad); }
     .rec-card { grid-column: span 3; }
@@ -107,72 +115,97 @@
     <section class="market-board">
       <article class="market-card">
         <h3>TOP 10 Most Active Buys</h3>
-        <ul class="market-list">
-          {% for row in market.active_buys %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{{ "{:,}".format(row.volume) }}</span>
-            </li>
-          {% endfor %}
-          {% if not market.active_buys %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Company</th><th>Country</th><th>Change</th><th>Volume</th></tr></thead>
+          <tbody>
+            {% for row in market.active_buys %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="ct">{{ row.country or "N/A" }}</td>
+                <td class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{{ "{:,}".format(row.volume) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.active_buys %}<tr><td colspan="5" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
       </article>
 
       <article class="market-card">
         <h3>TOP 10 Most Active Sells</h3>
-        <ul class="market-list">
-          {% for row in market.active_sells %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{{ "{:,}".format(row.volume) }}</span>
-            </li>
-          {% endfor %}
-          {% if not market.active_sells %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Company</th><th>Country</th><th>Change</th><th>Volume</th></tr></thead>
+          <tbody>
+            {% for row in market.active_sells %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="ct">{{ row.country or "N/A" }}</td>
+                <td class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{{ "{:,}".format(row.volume) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.active_sells %}<tr><td colspan="5" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
       </article>
 
       <article class="market-card">
         <h3>TOP 10 Gainers</h3>
-        <ul class="market-list">
-          {% for row in market.gainers %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{% if row.price is not none %}{{ "%.2f"|format(row.price) }}{% else %}N/A{% endif %}</span>
-            </li>
-          {% endfor %}
-          {% if not market.gainers %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Company</th><th>Country</th><th>Change</th><th>Price</th></tr></thead>
+          <tbody>
+            {% for row in market.gainers %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="ct">{{ row.country or "N/A" }}</td>
+                <td class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{% if row.price is not none %}{{ "%.2f"|format(row.price) }}{% else %}N/A{% endif %}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.gainers %}<tr><td colspan="5" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
       </article>
 
       <article class="market-card">
         <h3>TOP 10 Losers</h3>
-        <ul class="market-list">
-          {% for row in market.losers %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">{% if row.price is not none %}{{ "%.2f"|format(row.price) }}{% else %}N/A{% endif %}</span>
-            </li>
-          {% endfor %}
-          {% if not market.losers %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Company</th><th>Country</th><th>Change</th><th>Price</th></tr></thead>
+          <tbody>
+            {% for row in market.losers %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="ct">{{ row.country or "N/A" }}</td>
+                <td class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{% if row.price is not none %}{{ "%.2f"|format(row.price) }}{% else %}N/A{% endif %}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.losers %}<tr><td colspan="5" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
       </article>
 
       <article class="market-card rec-card">
         <h3>5 Recommendations to Buy Stocks</h3>
-        <ul class="market-list">
-          {% for row in market.recommendations %}
-            <li class="market-item">
-              <span><span class="sym">{{ row.symbol }}</span> <span class="nm">{{ row.name }}</span></span>
-              <span class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</span>
-              <span class="meta">Score {{ "%.3f"|format(row.score) }}</span>
-            </li>
-          {% endfor %}
-          {% if not market.recommendations %}<li class="market-item">No live data</li>{% endif %}
-        </ul>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Company</th><th>Country</th><th>Change</th><th>Score</th></tr></thead>
+          <tbody>
+            {% for row in market.recommendations %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="ct">{{ row.country or "N/A" }}</td>
+                <td class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">Score {{ "%.3f"|format(row.score) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.recommendations %}<tr><td colspan="5" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
       </article>
     </section>
   </main>
