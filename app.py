@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import time
 from typing import Optional
 
@@ -9,6 +10,7 @@ from flask import Flask, render_template, request
 from yfinance.exceptions import YFRateLimitError
 
 app = Flask(__name__)
+app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "0") == "1"
 PERIOD_OPTIONS = [("6mo", "6 Months"), ("1y", "1 Year"), ("2y", "2 Years"), ("5y", "5 Years")]
 
 
@@ -135,8 +137,11 @@ def index():
                     "Yahoo Finance is temporarily rate-limiting requests. "
                     "Please wait a minute and try again."
                 )
-            except Exception as exc:
-                error = f"Could not analyze '{input_value}': {exc}"
+            except ValueError as exc:
+                error = str(exc)
+            except Exception:
+                app.logger.exception("Unexpected error while analyzing input: %s", input_value)
+                error = "Could not analyze this input right now. Please try again."
 
     return render_template(
         "index.html",
@@ -148,4 +153,4 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=app.config["DEBUG"])
