@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import csv
 import io
 import os
+import random
 import time
 from typing import Optional
 
@@ -17,7 +18,8 @@ app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "0") == "1"
 
 PERIOD_OPTIONS = [("6mo", "6 Months"), ("1y", "1 Year"), ("2y", "2 Years"), ("5y", "5 Years")]
 THRESHOLD_OPTIONS = [3, 5, 10]
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SECONDS = 900
+STALE_CACHE_MAX_AGE_SECONDS = 21600
 MAX_RECENT_SEARCHES = 8
 
 ANALYSIS_CACHE: dict[tuple[str, str, int], tuple[float, "AnalysisResult"]] = {}
@@ -43,7 +45,7 @@ class AnalysisResult:
 
 
 def _history_with_retry(
-    ticker: yf.Ticker, period: str, retries: int = 3, initial_delay: float = 1.0
+    ticker: yf.Ticker, period: str, retries: int = 5, initial_delay: float = 1.2
 ):
     delay = initial_delay
     for attempt in range(retries):
@@ -52,11 +54,11 @@ def _history_with_retry(
         except YFRateLimitError:
             if attempt == retries - 1:
                 raise
-            time.sleep(delay)
+            time.sleep(delay + random.uniform(0.0, 0.4))
             delay *= 2
 
 
-def _search_symbol_by_name(query: str, retries: int = 3, initial_delay: float = 1.0) -> str:
+def _search_symbol_by_name(query: str, retries: int = 5, initial_delay: float = 1.2) -> str:
     delay = initial_delay
     for attempt in range(retries):
         try:
@@ -70,7 +72,7 @@ def _search_symbol_by_name(query: str, retries: int = 3, initial_delay: float = 
         except YFRateLimitError:
             if attempt == retries - 1:
                 raise
-            time.sleep(delay)
+            time.sleep(delay + random.uniform(0.0, 0.4))
             delay *= 2
 
 
@@ -152,17 +154,25 @@ def get_stock_analysis(ticker_symbol: str, period: str = "2y", threshold_pct: in
             }
         )
 
-    recent_price = _history_with_retry(ticker, period="5d")
-    current_price: Optional[float] = None
-    if not recent_price.empty and "Close" in recent_price.columns:
-        current_price = float(recent_price["Close"].dropna().iloc[-1])
+    # Prefer latest value already available in the selected period to reduce extra API calls.
+    current_price: Optional[float] = float(weekly_close.iloc[-1]) if not weekly_close.empty else None
+    try:
+        recent_price = _history_with_retry(ticker, period="5d")
+        if not recent_price.empty and "Close" in recent_price.columns:
+            current_price = float(recent_price["Close"].dropna().iloc[-1])
+    except YFRateLimitError:
+        # Keep fallback current price from weekly series.
+        pass
 
-    dividends = ticker.dividends
     last_dividend: Optional[float] = None
     last_dividend_date: Optional[str] = None
-    if dividends is not None and not dividends.empty:
-        last_dividend = float(dividends.iloc[-1])
-        last_dividend_date = dividends.index[-1].strftime("%Y-%m-%d")
+    try:
+        dividends = ticker.dividends
+        if dividends is not None and not dividends.empty:
+            last_dividend = float(dividends.iloc[-1])
+            last_dividend_date = dividends.index[-1].strftime("%Y-%m-%d")
+    except Exception:
+        pass
 
     company_name: Optional[str] = None
     company_state: Optional[str] = None
@@ -209,9 +219,17 @@ def get_stock_analysis_cached(
         if now - cached_at < CACHE_TTL_SECONDS:
             return cached_result
 
-    result = get_stock_analysis(
-        ticker_symbol=ticker_symbol, period=period, threshold_pct=threshold_pct
-    )
+    try:
+        result = get_stock_analysis(
+            ticker_symbol=ticker_symbol, period=period, threshold_pct=threshold_pct
+        )
+    except YFRateLimitError:
+        if cached:
+            cached_at, cached_result = cached
+            if now - cached_at < STALE_CACHE_MAX_AGE_SECONDS:
+                return cached_result
+        raise
+
     ANALYSIS_CACHE[cache_key] = (now, result)
     return result
 
@@ -280,10 +298,7 @@ def index():
                 input_value, period=selected_period, threshold_pct=selected_threshold
             )
         except YFRateLimitError:
-            error = (
-                "Yahoo Finance is temporarily rate-limiting requests. "
-                "Please wait a minute and try again."
-            )
+            error = "Data provider is busy right now. Please try again shortly."
         except ValueError as exc:
             error = str(exc)
         except Exception:
@@ -317,7 +332,7 @@ def export_csv():
     try:
         result = _analyze_input(query, period=period, threshold_pct=threshold, record_history=False)
     except YFRateLimitError:
-        return ("Rate limited by Yahoo Finance. Please try again later.", 429)
+        return ("Data provider is busy right now. Please try export again shortly.", 429)
     except ValueError as exc:
         return (str(exc), 400)
     except Exception:

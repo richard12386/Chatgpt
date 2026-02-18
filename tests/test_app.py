@@ -17,8 +17,12 @@ class HistoryRetryTests(unittest.TestCase):
 
         self.assertIs(result, expected)
         self.assertEqual(ticker.history.call_count, 3)
-        sleep_mock.assert_any_call(1.0)
-        sleep_mock.assert_any_call(2.0)
+        self.assertEqual(sleep_mock.call_count, 2)
+        first_sleep = sleep_mock.call_args_list[0].args[0]
+        second_sleep = sleep_mock.call_args_list[1].args[0]
+        self.assertGreaterEqual(first_sleep, 1.0)
+        self.assertLess(first_sleep, 1.5)
+        self.assertGreater(second_sleep, first_sleep)
 
     @patch("app.time.sleep")
     def test_history_with_retry_raises_after_last_retry(self, sleep_mock: Mock):
