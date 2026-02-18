@@ -20,8 +20,17 @@ from yfinance.exceptions import YFRateLimitError
 app = Flask(__name__)
 app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "0") == "1"
 
-PERIOD_OPTIONS = [("6mo", "6 Months"), ("1y", "1 Year"), ("2y", "2 Years"), ("5y", "5 Years")]
-THRESHOLD_OPTIONS = [3, 5, 10]
+PERIOD_OPTIONS = [
+    ("1d", "1D"),
+    ("5d", "5D"),
+    ("1mo", "1M"),
+    ("6mo", "6M"),
+    ("ytd", "YTD"),
+    ("1y", "1Y"),
+    ("5y", "5Y"),
+    ("max", "All"),
+]
+THRESHOLD_OPTIONS = [5, 8, 13, 21, 34, 55]
 CACHE_TTL_SECONDS = 900
 STALE_CACHE_MAX_AGE_SECONDS = 21600
 MAX_RECENT_SEARCHES = 8
@@ -292,7 +301,9 @@ def _search_symbol_by_name(query: str, retries: int = 5, initial_delay: float = 
 
 
 def _normalize_period(requested_period: str) -> str:
-    return requested_period if requested_period in dict(PERIOD_OPTIONS) else "2y"
+    # Keep backward compatibility for old links that might still contain 2y.
+    valid_values = {value for value, _ in PERIOD_OPTIONS} | {"2y"}
+    return requested_period if requested_period in valid_values else "1y"
 
 
 def _normalize_threshold(requested_threshold: str) -> int:
@@ -505,16 +516,16 @@ def index():
     error: Optional[str] = None
 
     input_value = ""
-    selected_period = "2y"
+    selected_period = "1y"
     selected_threshold = 5
 
     if request.method == "POST":
         input_value = request.form.get("ticker", "").strip()
-        selected_period = _normalize_period(request.form.get("period", "2y"))
+        selected_period = _normalize_period(request.form.get("period", "1y"))
         selected_threshold = _normalize_threshold(request.form.get("threshold", "5"))
     elif request.args.get("query"):
         input_value = request.args.get("query", "").strip()
-        selected_period = _normalize_period(request.args.get("period", "2y"))
+        selected_period = _normalize_period(request.args.get("period", "1y"))
         selected_threshold = _normalize_threshold(request.args.get("threshold", "5"))
 
     if input_value:
@@ -562,7 +573,7 @@ def export_csv():
     if not query:
         return ("Missing query parameter.", 400)
 
-    period = _normalize_period(request.args.get("period", "2y"))
+    period = _normalize_period(request.args.get("period", "1y"))
     threshold = _normalize_threshold(request.args.get("threshold", "5"))
 
     try:

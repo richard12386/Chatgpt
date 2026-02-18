@@ -70,10 +70,12 @@
     form {
       margin-top: 1rem;
       display: grid;
-      grid-template-columns: 1fr 160px 170px auto;
+      grid-template-columns: 1fr auto;
       gap: 0.65rem;
       align-items: end;
     }
+    .form-main { min-width: 0; }
+    .form-actions { display: flex; align-items: end; }
     label {
       display: block;
       margin-bottom: 0.25rem;
@@ -81,7 +83,7 @@
       color: var(--muted);
       font-weight: 600;
     }
-    input[type="text"], select {
+    input[type="text"] {
       width: 100%;
       border-radius: 12px;
       border: 1px solid var(--line);
@@ -89,6 +91,35 @@
       padding: 0.72rem 0.8rem;
       font-size: 0.98rem;
       color: var(--ink);
+    }
+    .choice-group { margin-top: 0.55rem; }
+    .choice-row {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .choice-row input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .choice-row label {
+      margin: 0;
+      color: #334155;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0.38rem 0.62rem;
+      font-size: 0.83rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 120ms ease;
+      user-select: none;
+    }
+    .choice-row input:checked + label {
+      background: #e0f2fe;
+      border-color: #7dd3fc;
+      color: #0c4a6e;
     }
     button {
       border: 0;
@@ -230,7 +261,8 @@
       to { opacity: 1; transform: translateY(0); }
     }
     @media (max-width: 880px) {
-      form { grid-template-columns: 1fr 1fr; }
+      form { grid-template-columns: 1fr; }
+      .form-actions { align-items: stretch; }
       .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 620px) {
@@ -251,27 +283,29 @@
       <h1>Yahoo Finance Stock Analyzer</h1>
       <p class="lead">Analyze weekly volatility, dividends, company profile, and export results.</p>
       <form method="post">
-        <div>
+        <div class="form-main">
           <label for="ticker">Ticker or Company Name</label>
           <input id="ticker" type="text" name="ticker" value="{{ input_value }}" placeholder="e.g. AAPL or Thales" required>
-        </div>
-        <div>
-          <label for="period">Range</label>
-          <select id="period" name="period">
+          <div class="choice-group">
+            <label>Range</label>
+            <div class="choice-row">
             {% for value, label in period_options %}
-              <option value="{{ value }}" {% if value == selected_period %}selected{% endif %}>{{ label }}</option>
+              <input id="period-{{ value }}" type="radio" name="period" value="{{ value }}" {% if value == selected_period %}checked{% endif %}>
+              <label for="period-{{ value }}">{{ label }}</label>
             {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="threshold">Volatility Threshold</label>
-          <select id="threshold" name="threshold">
+            </div>
+          </div>
+          <div class="choice-group">
+            <label>Volatility Threshold</label>
+            <div class="choice-row">
             {% for value in threshold_options %}
-              <option value="{{ value }}" {% if value == selected_threshold %}selected{% endif %}>{{ value }}%</option>
+              <input id="threshold-{{ value }}" type="radio" name="threshold" value="{{ value }}" {% if value == selected_threshold %}checked{% endif %}>
+              <label for="threshold-{{ value }}">{{ value }}%</label>
             {% endfor %}
-          </select>
+            </div>
+          </div>
         </div>
-        <div>
+        <div class="form-actions">
           <button type="submit">Analyze</button>
         </div>
       </form>
