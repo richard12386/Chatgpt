@@ -5,112 +5,290 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stock Analyzer</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 900px;
-      margin: 2rem auto;
-      padding: 0 1rem;
-      color: #222;
+    :root {
+      --bg-1: #fdf6e3;
+      --bg-2: #f4f7ff;
+      --ink: #162029;
+      --muted: #5f6b76;
+      --panel: rgba(255, 255, 255, 0.85);
+      --line: #d9dee4;
+      --accent: #005f73;
+      --danger: #b42318;
+      --good: #0f766e;
+      --bad: #c2410c;
     }
-    h1 { margin-bottom: 0.5rem; }
-    form { margin: 1rem 0 2rem; }
-    input[type="text"] { padding: 0.5rem; width: 200px; }
-    button { padding: 0.5rem 0.8rem; }
-    .error { color: #b00020; margin-top: 0.5rem; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(circle at 10% 20%, #ffe7b0 0%, transparent 35%),
+        radial-gradient(circle at 85% 10%, #c8e5ff 0%, transparent 40%),
+        linear-gradient(140deg, var(--bg-1), var(--bg-2));
+      min-height: 100vh;
+    }
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 2.2rem 1rem 3rem;
+      animation: fade-slide 450ms ease-out both;
+    }
+    .hero {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 1.2rem 1.2rem 1rem;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 14px 35px rgba(22, 32, 41, 0.08);
+    }
+    h1 {
+      margin: 0 0 0.35rem;
+      letter-spacing: 0.02em;
+      font-size: clamp(1.5rem, 2.2vw, 2.2rem);
+    }
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .note {
+      margin: 0.8rem 0 0;
+      color: #7a5510;
+      background: #fff3d8;
+      border: 1px solid #ffd08a;
+      border-radius: 12px;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.95rem;
+    }
+    form {
+      margin-top: 1rem;
+      display: grid;
+      grid-template-columns: 1fr 160px auto;
+      gap: 0.65rem;
+      align-items: end;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    input[type="text"], select {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 0.72rem 0.8rem;
+      font-size: 0.98rem;
+      color: var(--ink);
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent), #0a9396);
+      color: #fff;
+      font-weight: 700;
+      padding: 0.74rem 1rem;
+      cursor: pointer;
+      transition: transform 140ms ease, box-shadow 140ms ease;
+      box-shadow: 0 8px 18px rgba(0, 95, 115, 0.25);
+    }
+    button:hover { transform: translateY(-1px); }
+    .error {
+      margin-top: 1rem;
+      color: var(--danger);
+      background: #fef3f2;
+      border: 1px solid #fecdca;
+      border-radius: 12px;
+      padding: 0.7rem 0.8rem;
+    }
+    .results {
+      margin-top: 1rem;
+      display: grid;
+      gap: 1rem;
+    }
     .card {
-      border: 1px solid #ddd;
-      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
       padding: 1rem;
-      margin-bottom: 1rem;
-      background: #fafafa;
+      box-shadow: 0 10px 24px rgba(22, 32, 41, 0.06);
+      animation: fade-slide 380ms ease-out both;
+    }
+    .ticker {
+      margin: 0 0 0.8rem;
+      font-size: 1.35rem;
+      letter-spacing: 0.03em;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .pill {
+      font-size: 0.78rem;
+      padding: 0.22rem 0.5rem;
+      border-radius: 999px;
+      background: #dbeafe;
+      color: #1e40af;
+      border: 1px solid #bfdbfe;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+    .stat {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.65rem 0.75rem;
+    }
+    .stat .k {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.22rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+    }
+    .stat .v {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .weeks-title {
+      margin: 0 0 0.55rem;
+      font-size: 1.1rem;
     }
     table {
-      border-collapse: collapse;
       width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
     }
     th, td {
-      border: 1px solid #ddd;
-      padding: 0.5rem;
+      padding: 0.65rem 0.75rem;
       text-align: left;
+      border-bottom: 1px solid var(--line);
     }
-    th { background: #f0f0f0; }
+    tbody tr:last-child td { border-bottom: 0; }
+    th {
+      background: #f2f6fb;
+      font-size: 0.86rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #334155;
+    }
+    .pos { color: var(--good); font-weight: 700; }
+    .neg { color: var(--bad); font-weight: 700; }
+    .empty {
+      margin: 0;
+      color: var(--muted);
+      background: #fff;
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      padding: 0.8rem;
+    }
+    @keyframes fade-slide {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (max-width: 760px) {
+      .page { padding: 1rem 0.8rem 2rem; }
+      form { grid-template-columns: 1fr; }
+      .stat-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <h1>Yahoo Finance Stock Analyzer</h1>
-  <p>Enter a ticker symbol or company name to view current price, last dividend, and weeks with more than 5% movement.</p>
-  <p><em>Note: Yahoo Finance may temporarily rate-limit requests. If that happens, wait a minute and try again.</em></p>
+  <main class="page">
+    <section class="hero">
+      <h1>Yahoo Finance Stock Analyzer</h1>
+      <p class="lead">Analyze weekly volatility, latest dividend, and company profile from ticker or company name.</p>
+      <p class="note">Yahoo Finance may temporarily rate-limit requests. If that happens, wait a minute and try again.</p>
 
-  <form method="post">
-    <label for="ticker">Ticker or Company Name:</label>
-    <input id="ticker" type="text" name="ticker" placeholder="e.g. AAPL or Thales" required>
-    <label for="period">Range:</label>
-    <select id="period" name="period">
-      {% for value, label in period_options %}
-        <option value="{{ value }}" {% if value == selected_period %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-    <button type="submit">Analyze</button>
-  </form>
+      <form method="post">
+        <div>
+          <label for="ticker">Ticker or Company Name</label>
+          <input id="ticker" type="text" name="ticker" placeholder="e.g. AAPL or Thales" required>
+        </div>
+        <div>
+          <label for="period">Range</label>
+          <select id="period" name="period">
+            {% for value, label in period_options %}
+              <option value="{{ value }}" {% if value == selected_period %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <button type="submit">Analyze</button>
+        </div>
+      </form>
+    </section>
 
-  {% if error %}
-    <div class="error">{{ error }}</div>
-  {% endif %}
-
-  {% if result %}
-    <div class="card">
-      <h2>{{ result.ticker }}</h2>
-      <p><strong>Company Name:</strong>
-        {% if result.company_name %}
-          {{ result.company_name }}
-        {% else %}
-          Not available
-        {% endif %}
-      </p>
-      <p><strong>Current Price:</strong>
-        {% if result.current_price is not none %}
-          ${{ "%.2f"|format(result.current_price) }}
-        {% else %}
-          Not available
-        {% endif %}
-      </p>
-      <p><strong>Last Dividend:</strong>
-        {% if result.last_dividend is not none %}
-          ${{ "%.4f"|format(result.last_dividend) }} ({{ result.last_dividend_date }})
-        {% else %}
-          Not available
-        {% endif %}
-      </p>
-      <p><strong>Company State:</strong>
-        {% if result.company_state %}
-          {{ result.company_state }}
-        {% else %}
-          Not available
-        {% endif %}
-      </p>
-    </div>
-
-    <h3>Weeks with More Than 5% Price Change</h3>
-    {% if result.volatile_weeks %}
-      <table>
-        <thead>
-          <tr>
-            <th>Week Ending</th>
-            <th>Price Change</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for week in result.volatile_weeks %}
-            <tr>
-              <td>{{ week.week_end }}</td>
-              <td>{{ week.change_pct }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p>No weeks with movement greater than 5% in the selected period.</p>
+    {% if error %}
+      <div class="error">{{ error }}</div>
     {% endif %}
-  {% endif %}
+
+    {% if result %}
+    <section class="results">
+      <div class="card">
+        <h2 class="ticker">{{ result.ticker }} <span class="pill">live snapshot</span></h2>
+        <div class="stat-grid">
+          <div class="stat">
+            <span class="k">Company Name</span>
+            <span class="v">{% if result.company_name %}{{ result.company_name }}{% else %}Not available{% endif %}</span>
+          </div>
+          <div class="stat">
+            <span class="k">Company State</span>
+            <span class="v">{% if result.company_state %}{{ result.company_state }}{% else %}Not available{% endif %}</span>
+          </div>
+          <div class="stat">
+            <span class="k">Current Price</span>
+            <span class="v">{% if result.current_price is not none %}${{ "%.2f"|format(result.current_price) }}{% else %}Not available{% endif %}</span>
+          </div>
+          <div class="stat">
+            <span class="k">Last Dividend</span>
+            <span class="v">
+              {% if result.last_dividend is not none %}
+                ${{ "%.4f"|format(result.last_dividend) }} ({{ result.last_dividend_date }})
+              {% else %}
+                Not available
+              {% endif %}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="weeks-title">Weeks with More Than 5% Price Change</h3>
+        {% if result.volatile_weeks %}
+          <table>
+            <thead>
+              <tr>
+                <th>Week Ending</th>
+                <th>Price Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for week in result.volatile_weeks %}
+                <tr>
+                  <td>{{ week.week_end }}</td>
+                  <td class="{% if week.change_pct.startswith('-') %}neg{% else %}pos{% endif %}">{{ week.change_pct }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">No weeks with movement greater than 5% in the selected period.</p>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+  </main>
 </body>
 </html>

@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -e
+
+echo "[pre-push] Running test suite..."
+
+if [ -x "./.venv/Scripts/python.exe" ]; then
+  ./.venv/Scripts/python.exe -m unittest discover -s tests -v
+else
+  python -m unittest discover -s tests -v
+fi
