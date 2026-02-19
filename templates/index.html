@@ -271,105 +271,68 @@
       padding: 0.75rem;
       background: #fff;
     }
-    .info-card { margin-top: 1rem; }
-    .info-head {
-      display: flex;
-      align-items: center;
-      gap: 0.45rem;
-      flex-wrap: wrap;
-      margin-bottom: 0.55rem;
+    .exchange-panel {
+      margin-top: 0.9rem;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.65rem;
     }
-    .info-title {
+    .exchange-title {
+      font-size: 0.86rem;
+      color: var(--muted);
       font-weight: 800;
-      font-size: 1rem;
-      letter-spacing: 0.02em;
+      margin-bottom: 0.5rem;
     }
-    .help-dot {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 1.1rem;
-      height: 1.1rem;
-      border-radius: 999px;
-      background: #e2e8f0;
-      color: #0f172a;
-      font-size: 0.72rem;
-      font-weight: 800;
-      cursor: help;
-      border: 1px solid #cbd5e1;
-    }
-    .more-btn {
-      margin-left: auto;
-      border: 1px solid #cbd5e1;
-      background: #f8fafc;
-      color: #0f172a;
-      border-radius: 10px;
-      padding: 0.34rem 0.58rem;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .info-body[hidden] { display: none; }
-    .tab-row {
+    .exchange-links {
       display: flex;
       gap: 0.45rem;
       flex-wrap: wrap;
       margin-bottom: 0.6rem;
     }
-    .tab-btn {
-      border: 1px solid #cbd5e1;
-      background: #fff;
-      color: #334155;
+    .exchange-link {
+      text-decoration: none;
+      color: #0f172a;
+      background: #f8fafc;
+      border: 1px solid #dbe2ea;
       border-radius: 999px;
-      padding: 0.3rem 0.56rem;
-      font-size: 0.82rem;
+      padding: 0.32rem 0.58rem;
+      font-size: 0.8rem;
       font-weight: 700;
-      cursor: pointer;
     }
-    .tab-btn.active {
-      background: #e0f2fe;
-      border-color: #7dd3fc;
-      color: #0c4a6e;
+    .exchange-link.active {
+      background: #dbeafe;
+      border-color: #93c5fd;
+      color: #1e40af;
     }
-    .info-pane[hidden] { display: none; }
-    .mini-table {
+    .exchange-table {
       width: 100%;
       border-collapse: collapse;
       border: 1px solid var(--line);
       border-radius: 10px;
       overflow: hidden;
       background: #fff;
-      font-size: 0.84rem;
+      font-size: 0.82rem;
     }
-    .mini-table th, .mini-table td {
+    .exchange-table th, .exchange-table td {
       border-bottom: 1px solid var(--line);
-      padding: 0.42rem 0.52rem;
+      padding: 0.38rem 0.5rem;
       text-align: left;
     }
-    .mini-table tr:last-child td { border-bottom: 0; }
-    .mini-table th {
+    .exchange-table tr:last-child td { border-bottom: 0; }
+    .exchange-table th {
       background: #f8fafc;
-      font-size: 0.74rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
       color: #334155;
-    }
-    #worldMap {
-      width: 100%;
-      min-height: 360px;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: #fff;
-    }
-    .map-note {
-      margin-top: 0.5rem;
-      font-size: 0.84rem;
-      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
     .recent {
       margin-top: 0.85rem;
       display: flex;
       gap: 0.5rem;
       flex-wrap: wrap;
+      align-items: center;
     }
     .recent-item {
       text-decoration: none;
@@ -379,6 +342,70 @@
       border-radius: 999px;
       padding: 0.35rem 0.65rem;
       font-size: 0.84rem;
+    }
+    .history-toggle {
+      border: 1px solid #dbe2ea;
+      background: #f8fafc;
+      color: #334155;
+      border-radius: 999px;
+      padding: 0.35rem 0.62rem;
+      font-size: 0.84rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .history-panel {
+      margin-top: 0.6rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 0.65rem;
+    }
+    .history-panel[hidden] { display: none; }
+    .history-head {
+      display: flex;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 0.6rem;
+    }
+    .history-head label {
+      margin: 0;
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .history-head select {
+      border: 1px solid #dbe2ea;
+      border-radius: 8px;
+      padding: 0.28rem 0.4rem;
+      font-size: 0.82rem;
+      background: #fff;
+    }
+    .history-clear-btn {
+      border: 1px solid #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 8px;
+      padding: 0.35rem 0.56rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .history-groups {
+      display: grid;
+      gap: 0.55rem;
+    }
+    .history-group {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 0.45rem;
+      background: #f8fafc;
+    }
+    .history-group-title {
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: #334155;
+      margin-bottom: 0.35rem;
     }
     .watch-actions {
       margin-top: 0.8rem;
@@ -481,7 +508,38 @@
         {% for item in recent_searches %}
           <a class="recent-item" href="/?query={{ item.query|urlencode }}&period={{ item.period }}&threshold={{ item.threshold }}&granularity={{ item.granularity or 'week' }}">{{ item.query }} -> {{ item.ticker }} ({{ item.threshold }}%, {{ item.granularity or 'week' }})</a>
         {% endfor %}
+        {% if search_history|length > recent_searches|length %}
+          <button id="historyToggleBtn" class="history-toggle" type="button">▼ Full History</button>
+        {% endif %}
       </div>
+      {% if search_history %}
+      <div id="historyPanel" class="history-panel" hidden>
+        <div class="history-head">
+          <label for="historyGroupMode">View:</label>
+          <select id="historyGroupMode">
+            <option value="none">No Grouping</option>
+            <option value="ticker">Group by Ticker</option>
+            <option value="date">Group by Date</option>
+          </select>
+          <form method="post" action="/recent/clear" class="inline-form">
+            <button type="submit" class="history-clear-btn">Remove All History</button>
+          </form>
+        </div>
+        <div id="historyGroups" class="history-groups">
+          {% for item in search_history %}
+            <a
+              class="recent-item history-entry"
+              data-query="{{ item.query }}"
+              data-ticker="{{ item.ticker }}"
+              data-date="{{ item.timestamp }}"
+              href="/?query={{ item.query|urlencode }}&period={{ item.period }}&threshold={{ item.threshold }}&granularity={{ item.granularity or 'week' }}"
+            >
+              {{ item.query }} -> {{ item.ticker }} ({{ item.threshold }}%, {{ item.granularity or 'week' }}) @ {{ item.timestamp }}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
       {% endif %}
 
       {% if current_user and watchlist %}
@@ -492,41 +550,6 @@
         {% endfor %}
       </div>
       {% endif %}
-    </section>
-
-    <section class="card info-card">
-      <div class="info-head">
-        <span class="info-title">SYMBOL_COUNTRY_SUFFIX_MAP</span>
-        <span class="help-dot" title="Suffix map for stock symbols. Hover country on map to see suffixes.">?</span>
-        <button id="moreInfoBtn" class="more-btn" type="button">More info</button>
-      </div>
-      <div id="infoBody" class="info-body" hidden>
-        <div class="tab-row">
-          <button class="tab-btn active" type="button" data-target="suffixListPane">List</button>
-          <button class="tab-btn" type="button" data-target="worldMapPane">World Map</button>
-        </div>
-
-        <div id="suffixListPane" class="info-pane">
-          <table class="mini-table">
-            <thead>
-              <tr><th>Suffix</th><th>Country</th></tr>
-            </thead>
-            <tbody>
-              {% for suffix, country in symbol_country_suffix_map.items() %}
-              <tr>
-                <td>.{{ suffix }}</td>
-                <td>{{ country }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-
-        <div id="worldMapPane" class="info-pane" hidden>
-          <div id="worldMap"></div>
-          <p id="mapHoverNote" class="map-note">Hover on a country to see name (ENG) and suffixes.</p>
-        </div>
-      </div>
     </section>
 
     {% if error %}
@@ -564,6 +587,45 @@
             {% endif %}
           {% endif %}
         </div>
+
+        {% if exchange_listings %}
+        <div class="exchange-panel">
+          <div class="exchange-title">All Exchanges For This Company (Quick Switch)</div>
+          <div class="exchange-links">
+            {% for ex in exchange_listings %}
+              <a
+                class="exchange-link {% if ex.symbol == result.ticker %}active{% endif %}"
+                href="/?query={{ ex.symbol|urlencode }}&period={{ selected_period }}&threshold={{ selected_threshold }}&granularity={{ selected_granularity }}"
+                title="{{ ex.name }} | {{ ex.exchange }} | {{ ex.country }} | {{ ex.currency }}"
+              >
+                {{ ex.symbol }} · {{ ex.exchange }}
+              </a>
+            {% endfor %}
+          </div>
+          <table class="exchange-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Company</th>
+                <th>Exchange</th>
+                <th>Country</th>
+                <th>Currency</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for ex in exchange_listings %}
+              <tr>
+                <td>{{ ex.symbol }}</td>
+                <td>{{ ex.name }}</td>
+                <td>{{ ex.exchange }}</td>
+                <td>{{ ex.country }}</td>
+                <td>{{ ex.currency }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
       </div>
 
       <div class="card">
@@ -621,8 +683,8 @@
           backgroundColor: "rgba(0, 95, 115, 0.1)",
           tension: 0.2,
           fill: true,
-          pointRadius: 3,
-          pointHoverRadius: 5,
+          pointRadius: 2,
+          pointHoverRadius: 3,
           pointBackgroundColor: pointColors,
         }]
       },
@@ -647,8 +709,6 @@
     });
   </script>
   {% endif %}
-  <script src="https://cdn.jsdelivr.net/npm/jsvectormap"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsvectormap/dist/maps/world.js"></script>
 <script>
   (function () {
     const granularityInputs = document.querySelectorAll('input[name="granularity"]');
@@ -685,75 +745,53 @@
 </script>
 <script>
   (function () {
-    const moreBtn = document.getElementById("moreInfoBtn");
-    const infoBody = document.getElementById("infoBody");
-    const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
-    const panes = Array.from(document.querySelectorAll(".info-pane"));
-    const mapNote = document.getElementById("mapHoverNote");
-    const countrySuffixGroups = {{ country_suffix_groups|tojson }};
-    let mapInitialized = false;
-    let mapObj = null;
+    const toggleBtn = document.getElementById("historyToggleBtn");
+    const panel = document.getElementById("historyPanel");
+    const groupMode = document.getElementById("historyGroupMode");
+    const groupsRoot = document.getElementById("historyGroups");
+    const entries = Array.from(document.querySelectorAll(".history-entry"));
 
-    function activateTab(targetId) {
-      tabButtons.forEach((btn) => {
-        btn.classList.toggle("active", btn.dataset.target === targetId);
-      });
-      panes.forEach((pane) => {
-        pane.hidden = pane.id !== targetId;
-      });
-      if (targetId === "worldMapPane") {
-        initMapIfNeeded();
-      }
-    }
+    if (!panel || !groupsRoot || entries.length === 0) return;
 
-    function initMapIfNeeded() {
-      if (mapInitialized) return;
-      const mapEl = document.getElementById("worldMap");
-      if (!mapEl || typeof jsVectorMap === "undefined") {
-        if (mapNote) mapNote.textContent = "World map library could not be loaded.";
+    function renderGroups(mode) {
+      if (mode === "none") {
+        groupsRoot.innerHTML = "";
+        entries.forEach((entry) => groupsRoot.appendChild(entry));
         return;
       }
 
-      mapObj = new jsVectorMap({
-        selector: "#worldMap",
-        map: "world",
-        zoomButtons: true,
-        regionStyle: {
-          initial: {
-            fill: "#dbeafe",
-            stroke: "#94a3b8",
-            strokeWidth: 0.6,
-          },
-          hover: {
-            fill: "#7dd3fc",
-          },
-        },
-        onRegionTooltipShow(event, tooltip, code) {
-          const name = mapObj.getRegionName(code) || code;
-          const suffixes = countrySuffixGroups[name] || [];
-          const suffixText = suffixes.length ? suffixes.join(", ") : "N/A";
-          tooltip.text(`${name} | SYMBOL_COUNTRY_SUFFIX_MAP: ${suffixText}`);
-          if (mapNote) {
-            mapNote.textContent = `${name} (ENG) -> SYMBOL_COUNTRY_SUFFIX_MAP: ${suffixText}`;
-          }
-        },
+      const grouped = new Map();
+      entries.forEach((entry) => {
+        const key = mode === "ticker" ? (entry.dataset.ticker || "Unknown") : (entry.dataset.date || "Unknown");
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(entry);
       });
 
-      mapInitialized = true;
-    }
-
-    if (moreBtn && infoBody) {
-      moreBtn.addEventListener("click", () => {
-        infoBody.hidden = !infoBody.hidden;
-        if (!infoBody.hidden) {
-          activateTab("suffixListPane");
-        }
+      groupsRoot.innerHTML = "";
+      const sortedKeys = Array.from(grouped.keys()).sort((a, b) => (a > b ? 1 : -1));
+      sortedKeys.forEach((key) => {
+        const box = document.createElement("div");
+        box.className = "history-group";
+        const title = document.createElement("div");
+        title.className = "history-group-title";
+        title.textContent = `${mode === "ticker" ? "Ticker" : "Time"}: ${key}`;
+        box.appendChild(title);
+        grouped.get(key).forEach((entry) => box.appendChild(entry));
+        groupsRoot.appendChild(box);
       });
     }
 
-    tabButtons.forEach((btn) => {
-      btn.addEventListener("click", () => activateTab(btn.dataset.target));
-    });
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", () => {
+        panel.hidden = !panel.hidden;
+        toggleBtn.textContent = panel.hidden ? "▼ Full History" : "▲ Hide History";
+      });
+    }
+
+    if (groupMode) {
+      groupMode.addEventListener("change", () => renderGroups(groupMode.value));
+      renderGroups(groupMode.value);
+    }
   })();
 </script>
 </body>

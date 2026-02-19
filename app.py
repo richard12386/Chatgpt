@@ -45,11 +45,15 @@ CACHE_TTL_SECONDS = 900
 STALE_CACHE_MAX_AGE_SECONDS = 21600
 SEARCH_CACHE_TTL_SECONDS = 43200
 AUTO_REFRESH_INTERVAL_SECONDS = 60
-MAX_RECENT_SEARCHES = 8
+MAX_RECENT_SEARCHES = 4
+MAX_SEARCH_HISTORY = 200
+LISTINGS_CACHE_TTL_SECONDS = 21600
 
 ANALYSIS_CACHE: dict[tuple[str, str, int, str], tuple[float, "AnalysisResult"]] = {}
 SEARCH_CACHE: dict[str, tuple[float, str]] = {}
+LISTINGS_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
 RECENT_SEARCHES: deque[dict[str, str]] = deque(maxlen=MAX_RECENT_SEARCHES)
+SEARCH_HISTORY: deque[dict[str, str]] = deque(maxlen=MAX_SEARCH_HISTORY)
 LAST_MARKET_OVERVIEW: Optional[dict] = None
 AUTO_REFRESH_STOP = Event()
 AUTO_REFRESH_LOCK = Lock()
@@ -527,6 +531,127 @@ def _country_suffix_groups() -> dict[str, list[str]]:
     return dict(sorted(grouped.items(), key=lambda x: x[0]))
 
 
+def _listing_from_quote(quote: dict) -> Optional[dict[str, str]]:
+    symbol = quote.get("symbol")
+    if not symbol:
+        return None
+    symbol_text = _normalize_symbol(str(symbol))
+    if not symbol_text:
+        return None
+
+    exchange = quote.get("exchange") or quote.get("fullExchangeName") or quote.get("exchDisp")
+    country = _format_location(None, quote.get("country"), quote.get("region")) or _country_from_symbol(symbol_text)
+    return {
+        "symbol": symbol_text,
+        "name": str(quote.get("longName") or quote.get("shortName") or symbol_text),
+        "exchange": str(exchange) if exchange else "N/A",
+        "currency": str(quote.get("currency") or "N/A"),
+        "country": str(country or "N/A"),
+    }
+
+
+def _company_keywords(company_name: Optional[str], fallback_query: str) -> list[str]:
+    base = (company_name or fallback_query or "").lower()
+    words = re.findall(r"[a-z0-9]+", base)
+    keywords = [w for w in words if len(w) >= 3]
+    return keywords[:4]
+
+
+def _get_exchange_listings(
+    ticker_symbol: str, company_name: Optional[str], original_query: str
+) -> list[dict[str, str]]:
+    cache_key = ticker_symbol.upper()
+    now = time.time()
+    cached = LISTINGS_CACHE.get(cache_key)
+    if cached and now - cached[0] < LISTINGS_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    keywords = _company_keywords(company_name, original_query)
+    candidates: dict[str, dict[str, str]] = {}
+    queries = [company_name or "", original_query or "", ticker_symbol]
+    seen_queries: set[str] = set()
+
+    for raw_query in queries:
+        query = raw_query.strip()
+        if not query:
+            continue
+        query_l = query.lower()
+        if query_l in seen_queries:
+            continue
+        seen_queries.add(query_l)
+
+        try:
+            search_result = yf.Search(query, max_results=30)
+            quotes = getattr(search_result, "quotes", []) or []
+        except Exception:
+            quotes = []
+
+        for quote in quotes:
+            quote_type = str(quote.get("quoteType") or "").upper()
+            if quote_type and quote_type not in {"EQUITY", "ETF"}:
+                continue
+
+            listing = _listing_from_quote(quote)
+            if not listing:
+                continue
+
+            text = f"{listing['name']} {listing['symbol']}".lower()
+            if listing["symbol"] != cache_key and keywords and not any(k in text for k in keywords):
+                continue
+            candidates[listing["symbol"]] = listing
+
+    # Ensure the currently analyzed ticker is always present.
+    if cache_key not in candidates:
+        quote_rows = _fetch_quote_batch([cache_key], retries=1)
+        fallback_listing = _listing_from_quote(quote_rows[0]) if quote_rows else None
+        if fallback_listing:
+            candidates[cache_key] = fallback_listing
+        else:
+            candidates[cache_key] = {
+                "symbol": cache_key,
+                "name": company_name or cache_key,
+                "exchange": "N/A",
+                "currency": "N/A",
+                "country": _country_from_symbol(cache_key) or "N/A",
+            }
+
+    # Try alternate exchange suffixes for the same base symbol.
+    base_symbol = cache_key.split(".", 1)[0]
+    alt_symbols = [f"{base_symbol}.{suffix}" for suffix in sorted(SYMBOL_COUNTRY_SUFFIX_MAP.keys())]
+    if base_symbol and base_symbol != cache_key:
+        alt_symbols.append(base_symbol)
+    alt_symbols = [s for s in alt_symbols if s not in candidates]
+    if alt_symbols:
+        alt_quotes = _fetch_quote_batch(alt_symbols[:60], retries=1)
+        for quote in alt_quotes:
+            listing = _listing_from_quote(quote)
+            if listing:
+                candidates[listing["symbol"]] = listing
+
+    # Enrich missing fields from quote batch.
+    enrich_symbols = list(candidates.keys())[:30]
+    enrich_rows = _fetch_quote_batch(enrich_symbols, retries=1)
+    by_symbol = {
+        _normalize_symbol(str(r.get("symbol", ""))): r for r in enrich_rows if r.get("symbol")
+    }
+    for symbol, listing in candidates.items():
+        row = by_symbol.get(symbol)
+        if not row:
+            continue
+        row_exchange = row.get("exchange") or row.get("fullExchangeName") or row.get("exchDisp")
+        row_country = _format_location(None, row.get("country"), row.get("region"))
+        listing["exchange"] = listing["exchange"] if listing["exchange"] != "N/A" else str(row_exchange or "N/A")
+        listing["currency"] = listing["currency"] if listing["currency"] != "N/A" else str(row.get("currency") or "N/A")
+        listing["country"] = listing["country"] if listing["country"] != "N/A" else str(row_country or "N/A")
+
+    listings = sorted(
+        candidates.values(),
+        key=lambda x: (0 if x["symbol"] == cache_key else 1, x["symbol"]),
+    )[:20]
+    LISTINGS_CACHE[cache_key] = (now, listings)
+    return listings
+
+
 def _scrape_market_table(url: str, retries: int = 1) -> list[dict]:
     delay = 0.8
     for attempt in range(retries):
@@ -953,19 +1078,28 @@ def _record_recent_search(query: str, ticker: str, period: str, threshold_pct: i
         "timestamp": time.strftime("%H:%M:%S"),
     }
 
-    deduped = deque(
-        (x for x in RECENT_SEARCHES if not (
+    deduped_history = deque(
+        (x for x in SEARCH_HISTORY if not (
             x["query"].lower() == query.lower()
             and x["ticker"] == ticker
             and x["period"] == period
             and x["threshold"] == str(threshold_pct)
             and x.get("granularity", "week") == granularity
         )),
-        maxlen=MAX_RECENT_SEARCHES,
+        maxlen=MAX_SEARCH_HISTORY,
     )
-    deduped.appendleft(entry)
+    deduped_history.appendleft(entry)
+    SEARCH_HISTORY.clear()
+    SEARCH_HISTORY.extend(deduped_history)
+
     RECENT_SEARCHES.clear()
-    RECENT_SEARCHES.extend(deduped)
+    for item in list(SEARCH_HISTORY)[:MAX_RECENT_SEARCHES]:
+        RECENT_SEARCHES.append(item)
+
+
+def _clear_search_history():
+    SEARCH_HISTORY.clear()
+    RECENT_SEARCHES.clear()
 
 
 def _latest_cached_result() -> Optional["AnalysisResult"]:
@@ -1418,6 +1552,12 @@ def logout():
     return redirect(url_for("index"))
 
 
+@app.post("/recent/clear")
+def recent_clear():
+    _clear_search_history()
+    return redirect(request.referrer or url_for("index"))
+
+
 @app.post("/watchlist/add")
 @_login_required
 def watchlist_add():
@@ -1442,6 +1582,7 @@ def index():
     error: Optional[str] = None
     current_user = _get_current_user()
     watchlist: list[str] = _watchlist_symbols(int(current_user["id"])) if current_user else []
+    exchange_listings: list[dict[str, str]] = []
 
     input_value = ""
     selected_period = "1y"
@@ -1503,6 +1644,13 @@ def index():
     elif request.method == "POST":
         error = "Please enter a ticker symbol or company name."
 
+    if result:
+        exchange_listings = _get_exchange_listings(
+            ticker_symbol=result.ticker,
+            company_name=result.company_name,
+            original_query=input_value or result.ticker,
+        )
+
     return render_template(
         "index.html",
         result=result,
@@ -1519,8 +1667,8 @@ def index():
         selected_granularity=selected_granularity,
         input_value=input_value,
         recent_searches=list(RECENT_SEARCHES),
-        symbol_country_suffix_map=dict(sorted(SYMBOL_COUNTRY_SUFFIX_MAP.items(), key=lambda x: x[0])),
-        country_suffix_groups=_country_suffix_groups(),
+        search_history=list(SEARCH_HISTORY),
+        exchange_listings=exchange_listings,
     )
 
 
@@ -1566,6 +1714,7 @@ def health():
         timestamp=int(time.time()),
         cache_entries=len(ANALYSIS_CACHE),
         recent_searches=len(RECENT_SEARCHES),
+        search_history=len(SEARCH_HISTORY),
         auto_refresh_running=bool(AUTO_REFRESH_THREAD and AUTO_REFRESH_THREAD.is_alive()),
         auto_refresh_interval_seconds=AUTO_REFRESH_INTERVAL_SECONDS,
         auto_refresh_last_run_at=int(AUTO_REFRESH_LAST_RUN_AT) if AUTO_REFRESH_LAST_RUN_AT else None,
