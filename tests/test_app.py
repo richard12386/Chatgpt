@@ -146,6 +146,68 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["status"], "ok")
 
+    def test_crypto_get_renders_page(self):
+        response = self.client.get("/crypto")
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Crypto Hub", body)
+        self.assertIn("Load Chart", body)
+
+    def test_crypto_post_empty_input_validation(self):
+        response = self.client.post("/crypto", data={"symbol": ""})
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Please enter a crypto symbol.", body)
+
+    @patch("app.get_crypto_price_summary")
+    @patch("app._fetch_crypto_chart_yahoo")
+    @patch("app._resolve_crypto_input")
+    def test_crypto_post_valid_renders_chart(
+        self,
+        resolve_mock: Mock,
+        fetch_chart_mock: Mock,
+        summary_mock: Mock,
+    ):
+        resolve_mock.return_value = ("BTC", "Bitcoin")
+        fetch_chart_mock.return_value = (
+            [
+                {"label": "02-19 10:00", "price": 65000.0},
+                {"label": "02-19 10:05", "price": 65100.0},
+            ],
+            65100.0,
+            0.15,
+        )
+        summary_mock.return_value = app.CryptoPriceResult(
+            symbol="BTC",
+            display_symbol="BTC/USD",
+            price_usd=65050.0,
+            source_prices={
+                "CoinMarketCap": 65020.0,
+                "Yahoo Finance": 65010.0,
+                "CoinGecko API": 65100.0,
+                "Binance API": 65070.0,
+            },
+            source_symbols={
+                "CoinMarketCap": "bitcoin",
+                "Yahoo Finance": "BTC-USD",
+                "CoinGecko API": "bitcoin",
+                "Binance API": "BTCUSDT",
+            },
+            as_of="2026-02-19 10:00:00",
+        )
+
+        response = self.client.post("/crypto", data={"symbol": "bitcoin", "range": "24h", "log_scale": "0"})
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Bitcoin (BTC/USD)", body)
+        self.assertIn("cryptoChart", body)
+        resolve_mock.assert_called_once_with("bitcoin")
+        fetch_chart_mock.assert_called_once_with("BTC", "24h")
+        summary_mock.assert_called_once_with("BTC")
+
     @patch("app._analyze_input")
     @patch("app._latest_cached_result")
     @patch("app.get_stock_analysis_http")
