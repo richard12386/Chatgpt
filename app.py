@@ -180,6 +180,27 @@ class CryptoPriceResult:
     as_of: str
 
 
+@dataclass
+class CryptoChartResult:
+    symbol: str
+    display_symbol: str
+    name: str
+    selected_range: str
+    current_price_usd: Optional[float]
+    change_pct: Optional[float]
+    points: list[dict[str, float | str]]
+    as_of: str
+
+
+CRYPTO_RANGE_OPTIONS = [
+    ("24h", "24h"),
+    ("1w", "1W"),
+    ("1m", "1M"),
+    ("1y", "1Y"),
+    ("all", "All"),
+]
+
+
 def _parse_price_text(raw: str) -> Optional[float]:
     if not raw:
         return None
@@ -214,6 +235,102 @@ def _fetch_crypto_price_binance(base_symbol: str) -> tuple[Optional[float], str]
         return price, pair
     except Exception:
         return None, pair
+
+
+def _normalize_crypto_range(raw_range: str) -> str:
+    allowed = {x[0] for x in CRYPTO_RANGE_OPTIONS}
+    return raw_range if raw_range in allowed else "24h"
+
+
+def _resolve_crypto_input(query: str) -> tuple[str, str]:
+    raw = (query or "").strip()
+    if not raw:
+        raise ValueError("Please enter a crypto symbol or coin name.")
+
+    symbol_guess = _normalize_crypto_symbol(raw)
+    raw_upper = raw.upper()
+    # Treat as direct symbol mostly when user enters short uppercase ticker-like input.
+    is_symbol_like = bool(re.fullmatch(r"[A-Z0-9]{2,10}", raw_upper))
+    if is_symbol_like and (raw == raw_upper or raw_upper.endswith("USD") or raw_upper.endswith("USDT")):
+        return symbol_guess, symbol_guess
+
+    try:
+        payload = _request_json_with_retry(
+            "https://api.coingecko.com/api/v3/search",
+            {"query": raw},
+            retries=2,
+            timeout=10,
+        )
+        coins = payload.get("coins", []) if isinstance(payload, dict) else []
+        if coins:
+            exact = None
+            raw_l = raw.lower()
+            for coin in coins:
+                if str(coin.get("name", "")).lower() == raw_l or str(coin.get("symbol", "")).lower() == raw_l:
+                    exact = coin
+                    break
+            if exact:
+                chosen = exact
+            else:
+                # Prefer ranked projects if available.
+                chosen = sorted(
+                    coins,
+                    key=lambda c: (
+                        10_000 if c.get("market_cap_rank") in (None, "", 0) else int(c.get("market_cap_rank"))
+                    ),
+                )[0]
+            sym = _normalize_crypto_symbol(str(chosen.get("symbol", "")))
+            nm = str(chosen.get("name") or sym)
+            if sym:
+                return sym, nm
+    except Exception:
+        pass
+
+    raise ValueError("Crypto symbol/name not found. Try e.g. BTC, ETH, Solana, Cardano.")
+
+
+def _fetch_crypto_chart_yahoo(base_symbol: str, selected_range: str) -> tuple[list[dict[str, float | str]], Optional[float], Optional[float]]:
+    yahoo_symbol = f"{base_symbol}-USD"
+    range_map = {
+        "24h": ("1d", "5m"),
+        "1w": ("7d", "30m"),
+        "1m": ("1mo", "1h"),
+        "1y": ("1y", "1d"),
+        "all": ("max", "1d"),
+    }
+    req_range, req_interval = range_map.get(selected_range, ("1d", "5m"))
+
+    payload = _request_json_with_retry(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}",
+        {"range": req_range, "interval": req_interval},
+        retries=2,
+        timeout=12,
+    )
+
+    rows = ((payload.get("chart") or {}).get("result")) or []
+    if not rows:
+        return [], None, None
+
+    row = rows[0]
+    timestamps = row.get("timestamp") or []
+    quote0 = (((row.get("indicators") or {}).get("quote") or [{}])[0]) or {}
+    closes = quote0.get("close") or []
+
+    points: list[dict[str, float | str]] = []
+    for ts, close in zip(timestamps, closes):
+        if close is None:
+            continue
+        dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        label = dt.strftime("%m-%d %H:%M") if selected_range in {"24h", "1w"} else dt.strftime("%Y-%m-%d")
+        points.append({"label": label, "price": float(close)})
+
+    if not points:
+        return [], None, None
+
+    first_price = float(points[0]["price"])
+    last_price = float(points[-1]["price"])
+    change_pct = ((last_price - first_price) / first_price * 100.0) if first_price else None
+    return points, last_price, change_pct
 
 
 def _fetch_crypto_price_coingecko(base_symbol: str) -> tuple[Optional[float], str]:
@@ -1854,22 +1971,43 @@ def index():
 def crypto():
     current_user = _get_current_user()
     input_value = ""
-    result: Optional[CryptoPriceResult] = None
+    result: Optional[CryptoChartResult] = None
     error: Optional[str] = None
+    selected_range = "24h"
+    log_scale = "0"
 
     if request.method == "POST":
         input_value = request.form.get("symbol", "").strip()
+        selected_range = _normalize_crypto_range(request.form.get("range", "24h"))
+        log_scale = "1" if request.form.get("log_scale") == "1" else "0"
     elif request.args.get("symbol"):
         input_value = request.args.get("symbol", "").strip()
+        selected_range = _normalize_crypto_range(request.args.get("range", "24h"))
+        log_scale = "1" if request.args.get("log_scale") == "1" else "0"
 
     if input_value:
         try:
-            result = get_crypto_price_summary(input_value)
+            base_symbol, coin_name = _resolve_crypto_input(input_value)
+            points, current_price, change_pct = _fetch_crypto_chart_yahoo(base_symbol, selected_range)
+            if not points:
+                raise ValueError("Could not load chart data for this coin right now.")
+            summary = get_crypto_price_summary(base_symbol)
+            display_price = summary.price_usd if summary.price_usd is not None else current_price
+            result = CryptoChartResult(
+                symbol=base_symbol,
+                display_symbol=f"{base_symbol}/USD",
+                name=coin_name,
+                selected_range=selected_range,
+                current_price_usd=display_price,
+                change_pct=change_pct,
+                points=points,
+                as_of=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
         except ValueError as exc:
             error = str(exc)
         except Exception:
             app.logger.exception("Unexpected crypto lookup error: %s", input_value)
-            error = "Could not load crypto price right now. Please try again."
+            error = "Could not load crypto chart right now. Please try again."
     elif request.method == "POST":
         error = "Please enter a crypto symbol."
 
@@ -1877,6 +2015,9 @@ def crypto():
         "crypto.html",
         current_user=current_user,
         input_value=input_value,
+        selected_range=selected_range,
+        range_options=CRYPTO_RANGE_OPTIONS,
+        log_scale=log_scale,
         result=result,
         error=error,
     )

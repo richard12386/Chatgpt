@@ -3,17 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Crypto Price Hub</title>
+  <title>Crypto Hub</title>
   <style>
     :root {
       --bg-1: #fff7ed;
       --bg-2: #ecfeff;
       --ink: #162029;
       --muted: #5f6b76;
-      --panel: rgba(255, 255, 255, 0.9);
+      --panel: rgba(255, 255, 255, 0.92);
       --line: #d9dee4;
-      --accent: #0a9396;
+      --accent: #0284c7;
       --danger: #b42318;
+      --up: #0f766e;
+      --down: #dc2626;
     }
     * { box-sizing: border-box; }
     body {
@@ -27,12 +29,12 @@
       min-height: 100vh;
     }
     .page {
-      max-width: 1020px;
+      max-width: 1080px;
       margin: 0 auto;
-      padding: 2rem 1rem 3rem;
+      padding: 1.4rem 1rem 2.5rem;
     }
     .topnav {
-      margin-bottom: 0.8rem;
+      margin-bottom: 0.75rem;
       border-bottom: 2px solid #0891b2;
       padding-bottom: 0.35rem;
       display: flex;
@@ -46,7 +48,7 @@
       background: #ecfeff;
       text-decoration: none;
       font-weight: 800;
-      padding: 0.45rem 0.7rem;
+      padding: 0.44rem 0.7rem;
       border-radius: 8px;
       display: inline-block;
     }
@@ -55,21 +57,21 @@
       color: #1e3a8a;
       border-color: #93c5fd;
     }
-    .topnav .spacer { flex: 1; }
     .hero, .card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      box-shadow: 0 12px 28px rgba(22, 32, 41, 0.08);
-      padding: 1rem;
+      border-radius: 16px;
+      box-shadow: 0 10px 24px rgba(22, 32, 41, 0.08);
+      padding: 0.95rem;
     }
-    h1 { margin: 0 0 0.35rem; }
+    h1 { margin: 0 0 0.2rem; }
     .lead { margin: 0; color: var(--muted); }
-    form {
-      margin-top: 0.9rem;
+    .query-form {
+      margin-top: 0.8rem;
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 0.6rem;
+      gap: 0.55rem;
+      align-items: center;
     }
     input[type="text"] {
       width: 100%;
@@ -83,56 +85,89 @@
     button {
       border: 0;
       border-radius: 12px;
-      background: linear-gradient(135deg, var(--accent), #0284c7);
+      background: linear-gradient(135deg, var(--accent), #0ea5e9);
       color: #fff;
       font-weight: 700;
       padding: 0.72rem 1rem;
       cursor: pointer;
     }
     .error {
-      margin-top: 1rem;
+      margin-top: 0.85rem;
       color: var(--danger);
       background: #fef3f2;
       border: 1px solid #fecdca;
       border-radius: 12px;
       padding: 0.7rem 0.8rem;
     }
-    .results { margin-top: 1rem; display: grid; gap: 1rem; }
-    .headline {
-      font-size: 1.15rem;
-      font-weight: 800;
-      margin: 0 0 0.35rem;
+    .results {
+      margin-top: 0.95rem;
+      display: grid;
+      gap: 0.9rem;
     }
-    .price-big {
-      font-size: 1.8rem;
-      font-weight: 900;
+    .head-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+    }
+    .coin-title {
       margin: 0;
+      font-size: 1.2rem;
+      font-weight: 900;
     }
-    .subtle { color: var(--muted); font-size: 0.9rem; margin: 0.25rem 0 0; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
+    .price {
+      margin: 0.16rem 0 0;
+      font-size: 1.55rem;
+      font-weight: 900;
+    }
+    .change {
+      margin: 0.2rem 0 0;
+      font-size: 0.9rem;
+      font-weight: 800;
+    }
+    .change.up { color: var(--up); }
+    .change.down { color: var(--down); }
+    .range-row {
+      display: inline-flex;
+      gap: 0.35rem;
+      padding: 0.3rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f8fafc;
+      flex-wrap: wrap;
+    }
+    .range-btn {
+      border: 1px solid #dbe2ea;
+      background: #fff;
+      color: #334155;
+      border-radius: 8px;
+      padding: 0.3rem 0.52rem;
+      font-size: 0.82rem;
+      font-weight: 800;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .range-btn.active {
+      background: #dbeafe;
+      border-color: #93c5fd;
+      color: #1e3a8a;
+    }
+    .chart-wrap {
+      height: 430px;
+      background: #fff;
       border: 1px solid var(--line);
       border-radius: 12px;
-      overflow: hidden;
-      background: #fff;
-      font-size: 0.9rem;
+      padding: 0.6rem;
     }
-    th, td {
-      border-bottom: 1px solid var(--line);
-      padding: 0.55rem 0.65rem;
-      text-align: left;
+    .subtle {
+      margin: 0.35rem 0 0;
+      color: var(--muted);
+      font-size: 0.84rem;
     }
-    tr:last-child td { border-bottom: 0; }
-    th {
-      background: #f8fafc;
-      font-size: 0.76rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: #334155;
-    }
-    @media (max-width: 620px) {
-      form { grid-template-columns: 1fr; }
+    @media (max-width: 650px) {
+      .query-form { grid-template-columns: 1fr; }
+      .chart-wrap { height: 320px; }
     }
   </style>
 </head>
@@ -142,18 +177,14 @@
       <a href="/">Stocks</a>
       <a class="active" href="/crypto">Crypto</a>
       <a href="/markets">Markets</a>
-      {% if current_user %}
-        <div class="spacer"></div>
-        <a href="/">{{ current_user.username }}</a>
-      {% endif %}
     </nav>
 
     <section class="hero">
-      <h1>Crypto Price Hub</h1>
-      <p class="lead">Price aggregation from CoinMarketCap, Yahoo Finance, CoinGecko API, and Binance API.</p>
-      <form method="post">
-        <input type="text" name="symbol" value="{{ input_value }}" placeholder="e.g. BTC, ETH, SOL, ADA, XRP" required>
-        <button type="submit">Get Price</button>
+      <h1>Crypto Hub</h1>
+      <p class="lead">Type symbol or full coin name (e.g. BTC, ETH, Solana, Cardano) to load live chart.</p>
+      <form class="query-form" method="post">
+        <input type="text" name="symbol" value="{{ input_value }}" placeholder="e.g. BTC or Bitcoin" required>
+        <button type="submit">Load Chart</button>
       </form>
     </section>
 
@@ -162,41 +193,87 @@
     {% endif %}
 
     {% if result %}
-      <section class="results">
-        <article class="card">
-          <p class="headline">{{ result.display_symbol }}</p>
-          <p class="price-big">
-            {% if result.price_usd is not none %}
-              ${{ "%.6f"|format(result.price_usd) }}
-            {% else %}
-              N/A
+    <section class="results">
+      <article class="card">
+        <div class="head-row">
+          <div>
+            <p class="coin-title">{{ result.name }} ({{ result.display_symbol }})</p>
+            <p class="price">{% if result.current_price_usd is not none %}${{ "%.6f"|format(result.current_price_usd) }}{% else %}N/A{% endif %}</p>
+            {% if result.change_pct is not none %}
+              <p class="change {% if result.change_pct >= 0 %}up{% else %}down{% endif %}">
+                {{ "%.2f"|format(result.change_pct) }}%
+              </p>
             {% endif %}
-          </p>
-          <p class="subtle">Average of available sources | As of {{ result.as_of }}</p>
-        </article>
+          </div>
+          <form method="get" class="range-row">
+            <input type="hidden" name="symbol" value="{{ result.symbol }}">
+            <input type="hidden" name="log_scale" value="{{ log_scale }}">
+            {% for value, label in range_options %}
+              <button class="range-btn {% if selected_range == value %}active{% endif %}" name="range" value="{{ value }}" type="submit">{{ label }}</button>
+            {% endfor %}
+            <button class="range-btn {% if log_scale == '1' %}active{% endif %}" type="submit" name="log_scale" value="{% if log_scale == '1' %}0{% else %}1{% endif %}">Log</button>
+          </form>
+        </div>
+        <p class="subtle">Chart source: Yahoo Finance | Price validation sources: CoinMarketCap, Yahoo, CoinGecko API, Binance API | As of {{ result.as_of }}</p>
+      </article>
 
-        <article class="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Reference</th>
-                <th>Price (USD)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for source, price in result.source_prices.items() %}
-              <tr>
-                <td>{{ source }}</td>
-                <td>{{ result.source_symbols[source] }}</td>
-                <td>{% if price is not none %}${{ "%.6f"|format(price) }}{% else %}N/A{% endif %}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </article>
-      </section>
+      <article class="card">
+        <div class="chart-wrap">
+          <canvas id="cryptoChart"></canvas>
+        </div>
+      </article>
+    </section>
     {% endif %}
   </main>
+
+  {% if result %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const points = {{ result.points|tojson }};
+    const labels = points.map((p) => p.label);
+    const prices = points.map((p) => p.price);
+    const up = {{ "true" if (result.change_pct is not none and result.change_pct >= 0) else "false" }};
+    const lineColor = up ? "#16a34a" : "#ef4444";
+
+    const ctx = document.getElementById("cryptoChart").getContext("2d");
+    new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "{{ result.display_symbol }}",
+          data: prices,
+          borderColor: lineColor,
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.2,
+          fill: true,
+          backgroundColor: up ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
+        }]
+      },
+      options: {
+        maintainAspectRatio: false,
+        animation: { duration: 450 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return "$" + Number(context.raw).toFixed(6);
+              }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: {
+            type: "{{ 'logarithmic' if log_scale == '1' else 'linear' }}",
+            beginAtZero: false
+          }
+        }
+      }
+    });
+  </script>
+  {% endif %}
 </body>
 </html>
