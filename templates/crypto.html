@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crypto Price Hub</title>
+  <style>
+    :root {
+      --bg-1: #fff7ed;
+      --bg-2: #ecfeff;
+      --ink: #162029;
+      --muted: #5f6b76;
+      --panel: rgba(255, 255, 255, 0.9);
+      --line: #d9dee4;
+      --accent: #0a9396;
+      --danger: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(circle at 10% 20%, #fde68a 0%, transparent 35%),
+        radial-gradient(circle at 85% 10%, #bae6fd 0%, transparent 40%),
+        linear-gradient(140deg, var(--bg-1), var(--bg-2));
+      min-height: 100vh;
+    }
+    .page {
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 2rem 1rem 3rem;
+    }
+    .topnav {
+      margin-bottom: 0.8rem;
+      border-bottom: 2px solid #0891b2;
+      padding-bottom: 0.35rem;
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .topnav a {
+      border: 1px solid #bae6fd;
+      color: #0c4a6e;
+      background: #ecfeff;
+      text-decoration: none;
+      font-weight: 800;
+      padding: 0.45rem 0.7rem;
+      border-radius: 8px;
+      display: inline-block;
+    }
+    .topnav a.active {
+      background: #dbeafe;
+      color: #1e3a8a;
+      border-color: #93c5fd;
+    }
+    .topnav .spacer { flex: 1; }
+    .hero, .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 12px 28px rgba(22, 32, 41, 0.08);
+      padding: 1rem;
+    }
+    h1 { margin: 0 0 0.35rem; }
+    .lead { margin: 0; color: var(--muted); }
+    form {
+      margin-top: 0.9rem;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.6rem;
+    }
+    input[type="text"] {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 0.72rem 0.8rem;
+      font-size: 0.98rem;
+      color: var(--ink);
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent), #0284c7);
+      color: #fff;
+      font-weight: 700;
+      padding: 0.72rem 1rem;
+      cursor: pointer;
+    }
+    .error {
+      margin-top: 1rem;
+      color: var(--danger);
+      background: #fef3f2;
+      border: 1px solid #fecdca;
+      border-radius: 12px;
+      padding: 0.7rem 0.8rem;
+    }
+    .results { margin-top: 1rem; display: grid; gap: 1rem; }
+    .headline {
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin: 0 0 0.35rem;
+    }
+    .price-big {
+      font-size: 1.8rem;
+      font-weight: 900;
+      margin: 0;
+    }
+    .subtle { color: var(--muted); font-size: 0.9rem; margin: 0.25rem 0 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 0.55rem 0.65rem;
+      text-align: left;
+    }
+    tr:last-child td { border-bottom: 0; }
+    th {
+      background: #f8fafc;
+      font-size: 0.76rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #334155;
+    }
+    @media (max-width: 620px) {
+      form { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <nav class="topnav" aria-label="Primary">
+      <a href="/">Stocks</a>
+      <a class="active" href="/crypto">Crypto</a>
+      <a href="/markets">Markets</a>
+      {% if current_user %}
+        <div class="spacer"></div>
+        <a href="/">{{ current_user.username }}</a>
+      {% endif %}
+    </nav>
+
+    <section class="hero">
+      <h1>Crypto Price Hub</h1>
+      <p class="lead">Price aggregation from CoinMarketCap, Yahoo Finance, CoinGecko API, and Binance API.</p>
+      <form method="post">
+        <input type="text" name="symbol" value="{{ input_value }}" placeholder="e.g. BTC, ETH, SOL, ADA, XRP" required>
+        <button type="submit">Get Price</button>
+      </form>
+    </section>
+
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+
+    {% if result %}
+      <section class="results">
+        <article class="card">
+          <p class="headline">{{ result.display_symbol }}</p>
+          <p class="price-big">
+            {% if result.price_usd is not none %}
+              ${{ "%.6f"|format(result.price_usd) }}
+            {% else %}
+              N/A
+            {% endif %}
+          </p>
+          <p class="subtle">Average of available sources | As of {{ result.as_of }}</p>
+        </article>
+
+        <article class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Reference</th>
+                <th>Price (USD)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source, price in result.source_prices.items() %}
+              <tr>
+                <td>{{ source }}</td>
+                <td>{{ result.source_symbols[source] }}</td>
+                <td>{% if price is not none %}${{ "%.6f"|format(price) }}{% else %}N/A{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </article>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

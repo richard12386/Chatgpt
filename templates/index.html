@@ -53,6 +53,11 @@
       border-radius: 8px;
       display: inline-block;
     }
+    .topnav a.active {
+      background: #dbeafe;
+      color: #1e3a8a;
+      border: 1px solid #93c5fd;
+    }
     .topnav .ghost {
       background: #f8fafc;
       color: #334155;
@@ -439,6 +444,8 @@
 <body>
   <main class="page">
     <nav class="topnav" aria-label="Primary">
+      <a class="active" href="/">Stocks</a>
+      <a href="/crypto">Crypto</a>
       <a href="/markets">Markets</a>
       {% if current_user %}
         <span class="user-pill">User: {{ current_user.username }}</span>

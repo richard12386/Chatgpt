@@ -42,6 +42,26 @@
       padding: 0.45rem 0.7rem;
       margin-bottom: 0.8rem;
     }
+    .mode-nav {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.7rem;
+    }
+    .mode-nav a {
+      text-decoration: none;
+      font-weight: 800;
+      color: #065f46;
+      background: #ecfdf5;
+      border: 1px solid #bbf7d0;
+      border-radius: 10px;
+      padding: 0.42rem 0.65rem;
+    }
+    .mode-nav a.active {
+      background: #dbeafe;
+      color: #1e3a8a;
+      border-color: #93c5fd;
+    }
     h1 { margin: 0 0 0.7rem; }
     .market-board {
       display: grid;
@@ -109,6 +129,11 @@
 </head>
 <body>
   <main class="page">
+    <nav class="mode-nav" aria-label="Mode">
+      <a href="/">Stocks</a>
+      <a href="/crypto">Crypto</a>
+      <a class="active" href="/markets">Markets</a>
+    </nav>
     <a class="back" href="/">&larr; Back to homepage</a>
     <h1>Markets</h1>
 

@@ -81,6 +81,21 @@ GOOGLE_FINANCE_URLS = {
     "gainers": "https://www.google.com/finance/markets/gainers",
     "losers": "https://www.google.com/finance/markets/losers",
 }
+CMC_SLUG_MAP = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "BNB": "bnb",
+    "SOL": "solana",
+    "XRP": "xrp",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "AVAX": "avalanche",
+    "DOT": "polkadot-new",
+    "LINK": "chainlink",
+    "LTC": "litecoin",
+    "TRX": "tron",
+    "MATIC": "polygon",
+}
 
 COUNTRY_CODE_MAP = {
     "USA": "United States",
@@ -153,6 +168,169 @@ class AnalysisResult:
     max_weekly_gain_pct: Optional[float]
     max_weekly_loss_pct: Optional[float]
     granularity: str
+
+
+@dataclass
+class CryptoPriceResult:
+    symbol: str
+    display_symbol: str
+    price_usd: Optional[float]
+    source_prices: dict[str, Optional[float]]
+    source_symbols: dict[str, str]
+    as_of: str
+
+
+def _parse_price_text(raw: str) -> Optional[float]:
+    if not raw:
+        return None
+    match = re.search(r"([0-9][0-9,]*(?:\.[0-9]+)?)", raw.replace("$", ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _normalize_crypto_symbol(query: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9]", "", (query or "").upper())
+    if clean.endswith("USDT"):
+        clean = clean[:-4]
+    if clean.endswith("USD"):
+        clean = clean[:-3]
+    return clean
+
+
+def _fetch_crypto_price_binance(base_symbol: str) -> tuple[Optional[float], str]:
+    pair = f"{base_symbol}USDT"
+    try:
+        payload = _request_json_with_retry(
+            "https://api.binance.com/api/v3/ticker/price",
+            {"symbol": pair},
+            retries=2,
+            timeout=8,
+        )
+        price = float(payload.get("price")) if isinstance(payload, dict) and payload.get("price") else None
+        return price, pair
+    except Exception:
+        return None, pair
+
+
+def _fetch_crypto_price_coingecko(base_symbol: str) -> tuple[Optional[float], str]:
+    try:
+        search_payload = _request_json_with_retry(
+            "https://api.coingecko.com/api/v3/search",
+            {"query": base_symbol},
+            retries=2,
+            timeout=10,
+        )
+        coins = search_payload.get("coins", []) if isinstance(search_payload, dict) else []
+        coin_id = None
+        for coin in coins:
+            if str(coin.get("symbol", "")).upper() == base_symbol:
+                coin_id = coin.get("id")
+                break
+        if not coin_id and coins:
+            coin_id = coins[0].get("id")
+        if not coin_id:
+            return None, base_symbol
+
+        price_payload = _request_json_with_retry(
+            "https://api.coingecko.com/api/v3/simple/price",
+            {"ids": coin_id, "vs_currencies": "usd"},
+            retries=2,
+            timeout=10,
+        )
+        usd = (price_payload.get(coin_id) or {}).get("usd") if isinstance(price_payload, dict) else None
+        return (float(usd) if usd is not None else None), str(coin_id)
+    except Exception:
+        return None, base_symbol
+
+
+def _fetch_crypto_price_yahoo(base_symbol: str) -> tuple[Optional[float], str]:
+    yahoo_symbol = f"{base_symbol}-USD"
+    quote_rows = _fetch_quote_batch([yahoo_symbol], retries=2)
+    if quote_rows:
+        price = quote_rows[0].get("regularMarketPrice")
+        try:
+            return (float(price) if price is not None else None), yahoo_symbol
+        except (TypeError, ValueError):
+            pass
+    # Fallback via Yahoo chart endpoint.
+    try:
+        payload = _request_json_with_retry(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}",
+            {"range": "1d", "interval": "1m"},
+            retries=2,
+            timeout=8,
+        )
+        rows = ((payload.get("chart") or {}).get("result")) or []
+        meta = (rows[0].get("meta") if rows else {}) or {}
+        price = meta.get("regularMarketPrice")
+        return (float(price) if price is not None else None), yahoo_symbol
+    except Exception:
+        pass
+    return None, yahoo_symbol
+
+
+def _fetch_crypto_price_cmc(base_symbol: str) -> tuple[Optional[float], str]:
+    slug = CMC_SLUG_MAP.get(base_symbol, base_symbol.lower())
+    url = f"https://coinmarketcap.com/currencies/{slug}/"
+    try:
+        response = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        for selector in [
+            '[data-test="text-cdp-price-display"]',
+            'span.sc-65e7f566-0',
+            'span[data-test="text-cdp-price-display"]',
+        ]:
+            node = soup.select_one(selector)
+            if node:
+                parsed = _parse_price_text(node.get_text(" ", strip=True))
+                if parsed is not None:
+                    return parsed, slug
+        # Fallback: first $-like number in page.
+        parsed = _parse_price_text(soup.get_text(" ", strip=True))
+        return parsed, slug
+    except Exception:
+        return None, slug
+
+
+def get_crypto_price_summary(query: str) -> CryptoPriceResult:
+    base = _normalize_crypto_symbol(query)
+    if not base:
+        raise ValueError("Please enter a valid crypto symbol (e.g. BTC, ETH, SOL).")
+
+    cmc_price, cmc_ref = _fetch_crypto_price_cmc(base)
+    yahoo_price, yahoo_ref = _fetch_crypto_price_yahoo(base)
+    gecko_price, gecko_ref = _fetch_crypto_price_coingecko(base)
+    binance_price, binance_ref = _fetch_crypto_price_binance(base)
+
+    source_prices = {
+        "CoinMarketCap": cmc_price,
+        "Yahoo Finance": yahoo_price,
+        "CoinGecko API": gecko_price,
+        "Binance API": binance_price,
+    }
+    source_symbols = {
+        "CoinMarketCap": cmc_ref,
+        "Yahoo Finance": yahoo_ref,
+        "CoinGecko API": gecko_ref,
+        "Binance API": binance_ref,
+    }
+
+    available = [p for p in source_prices.values() if p is not None]
+    final_price = sum(available) / len(available) if available else None
+
+    return CryptoPriceResult(
+        symbol=base,
+        display_symbol=f"{base}/USD",
+        price_usd=final_price,
+        source_prices=source_prices,
+        source_symbols=source_symbols,
+        as_of=time.strftime("%Y-%m-%d %H:%M:%S"),
+    )
 
 
 def _db_connect() -> sqlite3.Connection:
@@ -1669,6 +1847,38 @@ def index():
         recent_searches=list(RECENT_SEARCHES),
         search_history=list(SEARCH_HISTORY),
         exchange_listings=exchange_listings,
+    )
+
+
+@app.route("/crypto", methods=["GET", "POST"])
+def crypto():
+    current_user = _get_current_user()
+    input_value = ""
+    result: Optional[CryptoPriceResult] = None
+    error: Optional[str] = None
+
+    if request.method == "POST":
+        input_value = request.form.get("symbol", "").strip()
+    elif request.args.get("symbol"):
+        input_value = request.args.get("symbol", "").strip()
+
+    if input_value:
+        try:
+            result = get_crypto_price_summary(input_value)
+        except ValueError as exc:
+            error = str(exc)
+        except Exception:
+            app.logger.exception("Unexpected crypto lookup error: %s", input_value)
+            error = "Could not load crypto price right now. Please try again."
+    elif request.method == "POST":
+        error = "Please enter a crypto symbol."
+
+    return render_template(
+        "crypto.html",
+        current_user=current_user,
+        input_value=input_value,
+        result=result,
+        error=error,
     )
 
 
