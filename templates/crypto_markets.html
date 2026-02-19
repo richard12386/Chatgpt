@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crypto Markets</title>
+  <style>
+    :root {
+      --bg-1: #fff7ed;
+      --bg-2: #ecfeff;
+      --ink: #162029;
+      --muted: #5f6b76;
+      --panel: rgba(255, 255, 255, 0.92);
+      --line: #d9dee4;
+      --good: #0f766e;
+      --bad: #c2410c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(circle at 10% 20%, #fde68a 0%, transparent 35%),
+        radial-gradient(circle at 85% 10%, #bae6fd 0%, transparent 40%),
+        linear-gradient(140deg, var(--bg-1), var(--bg-2));
+      min-height: 100vh;
+    }
+    .page {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 1.2rem 1rem 2rem;
+    }
+    .mode-nav {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.7rem;
+    }
+    .mode-nav a {
+      text-decoration: none;
+      font-weight: 800;
+      color: #065f46;
+      background: #ecfdf5;
+      border: 1px solid #bbf7d0;
+      border-radius: 10px;
+      padding: 0.42rem 0.65rem;
+    }
+    .mode-nav a.active {
+      background: #dbeafe;
+      color: #1e3a8a;
+      border-color: #93c5fd;
+    }
+    .back {
+      display: inline-block;
+      text-decoration: none;
+      font-weight: 800;
+      color: #065f46;
+      background: #ecfdf5;
+      border: 1px solid #bbf7d0;
+      border-radius: 10px;
+      padding: 0.45rem 0.7rem;
+      margin-bottom: 0.8rem;
+    }
+    h1 { margin: 0 0 0.7rem; }
+    .market-board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.8rem;
+    }
+    .market-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 8px 20px rgba(22, 32, 41, 0.06);
+      padding: 0.7rem;
+    }
+    .market-card h3 {
+      margin: 0 0 0.45rem;
+      font-size: 1.02rem;
+      letter-spacing: 0.02em;
+    }
+    .market-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      font-size: 0.86rem;
+    }
+    .market-table th,
+    .market-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 0.42rem 0.46rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    .market-table tr:last-child td { border-bottom: 0; }
+    .market-table th {
+      background: #f7fafc;
+      color: #334155;
+      font-weight: 800;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .sym { font-weight: 800; white-space: nowrap; }
+    .nm { color: var(--muted); }
+    .ct { color: #0f766e; font-weight: 700; white-space: nowrap; }
+    .meta { font-weight: 700; font-size: 0.82rem; white-space: nowrap; }
+    .pos { color: var(--good); }
+    .neg { color: var(--bad); }
+    .empty-row {
+      color: var(--muted);
+      text-align: center;
+      font-style: italic;
+    }
+    .rec-card { grid-column: span 3; }
+    @media (max-width: 900px) {
+      .market-board { grid-template-columns: 1fr 1fr; }
+      .rec-card { grid-column: span 2; }
+    }
+    @media (max-width: 620px) {
+      .market-board { grid-template-columns: 1fr; }
+      .rec-card { grid-column: span 1; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <nav class="mode-nav" aria-label="Mode">
+      <a href="/">Stocks</a>
+      <a href="/crypto">Crypto</a>
+      <a href="/markets">Markets</a>
+      <a class="active" href="/crypto/markets">Crypto Markets</a>
+    </nav>
+    <a class="back" href="/crypto">&larr; Back to crypto hub</a>
+    <h1>Crypto Markets</h1>
+
+    <section class="market-board">
+      <article class="market-card">
+        <h3>TOP 10 Most Active Buys</h3>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Name</th><th>Change</th><th>Volume</th></tr></thead>
+          <tbody>
+            {% for row in market.active_buys %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{{ "{:,}".format(row.volume) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.active_buys %}<tr><td colspan="4" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </article>
+
+      <article class="market-card">
+        <h3>TOP 10 Most Active Sells</h3>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Name</th><th>Change</th><th>Volume</th></tr></thead>
+          <tbody>
+            {% for row in market.active_sells %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{{ "{:,}".format(row.volume) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.active_sells %}<tr><td colspan="4" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </article>
+
+      <article class="market-card">
+        <h3>TOP 10 Gainers</h3>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Name</th><th>Change</th><th>Price</th></tr></thead>
+          <tbody>
+            {% for row in market.gainers %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{% if row.price is not none %}{{ "%.6f"|format(row.price) }}{% else %}N/A{% endif %}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.gainers %}<tr><td colspan="4" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </article>
+
+      <article class="market-card">
+        <h3>TOP 10 Losers</h3>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Name</th><th>Change</th><th>Price</th></tr></thead>
+          <tbody>
+            {% for row in market.losers %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="meta neg">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{% if row.price is not none %}{{ "%.6f"|format(row.price) }}{% else %}N/A{% endif %}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.losers %}<tr><td colspan="4" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </article>
+
+      <article class="market-card rec-card">
+        <h3>5 Recommendations to Buy Crypto</h3>
+        <table class="market-table">
+          <thead><tr><th>Symbol</th><th>Name</th><th>Change</th><th>Score</th></tr></thead>
+          <tbody>
+            {% for row in market.recommendations %}
+              <tr>
+                <td class="sym">{{ row.symbol }}</td>
+                <td class="nm">{{ row.name }}</td>
+                <td class="meta pos">{% if row.change_pct is not none %}{{ "%.2f"|format(row.change_pct) }}%{% else %}N/A{% endif %}</td>
+                <td class="meta">{{ "%.3f"|format(row.score) }}</td>
+              </tr>
+            {% endfor %}
+            {% if not market.recommendations %}<tr><td colspan="4" class="empty-row">No live data</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

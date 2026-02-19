@@ -1195,6 +1195,126 @@ def _build_recommendations(buys: list[dict], gainers: list[dict], count: int = 5
     return scored[:count]
 
 
+def _to_crypto_market_row(row: dict) -> Optional[dict]:
+    symbol = _normalize_symbol(str(row.get("symbol", "")).upper())
+    if not symbol:
+        return None
+    return {
+        "symbol": symbol,
+        "name": str(row.get("name") or symbol),
+        "price": row.get("current_price"),
+        "change_pct": row.get("price_change_percentage_24h"),
+        "volume": int(float(row.get("total_volume") or 0)),
+        "exchange": "Multi-source",
+        "country": "N/A",
+        "currency": "USD",
+        "market_cap": float(row.get("market_cap") or 0),
+        "source": "coingecko",
+    }
+
+
+def _fetch_crypto_markets_coingecko() -> list[dict]:
+    try:
+        payload = _request_json_with_retry(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            {
+                "vs_currency": "usd",
+                "order": "volume_desc",
+                "per_page": 250,
+                "page": 1,
+                "sparkline": "false",
+                "price_change_percentage": "24h",
+            },
+            retries=2,
+            timeout=12,
+        )
+        if not isinstance(payload, list):
+            return []
+        rows = []
+        for item in payload:
+            mapped = _to_crypto_market_row(item)
+            if mapped:
+                rows.append(mapped)
+        return rows
+    except Exception:
+        return []
+
+
+def _fetch_crypto_markets_binance() -> list[dict]:
+    try:
+        payload = _request_json_with_retry(
+            "https://api.binance.com/api/v3/ticker/24hr",
+            {},
+            retries=2,
+            timeout=10,
+        )
+        if not isinstance(payload, list):
+            return []
+        rows = []
+        for item in payload:
+            symbol_text = str(item.get("symbol") or "")
+            if not symbol_text.endswith("USDT"):
+                continue
+            base = symbol_text[:-4]
+            mapped = {
+                "symbol": _normalize_symbol(base),
+                "name": _normalize_symbol(base),
+                "price": _extract_first_float(str(item.get("lastPrice", ""))),
+                "change_pct": _extract_first_float(str(item.get("priceChangePercent", ""))),
+                "volume": int(float(item.get("quoteVolume") or 0)),
+                "exchange": "Binance",
+                "country": "N/A",
+                "currency": "USD",
+                "market_cap": 0.0,
+                "source": "binance",
+            }
+            if mapped["symbol"]:
+                rows.append(mapped)
+        rows.sort(key=lambda x: x["volume"], reverse=True)
+        return rows[:250]
+    except Exception:
+        return []
+
+
+def get_crypto_market_overview_live() -> dict:
+    if app.config.get("TESTING"):
+        return {
+            "active_buys": [],
+            "active_sells": [],
+            "gainers": [],
+            "losers": [],
+            "recommendations": [],
+        }
+
+    gecko_rows = _fetch_crypto_markets_coingecko()
+    binance_rows = _fetch_crypto_markets_binance()
+    merged_rows = _merge_market_rows(gecko_rows, binance_rows)
+
+    if not merged_rows:
+        return {
+            "active_buys": [],
+            "active_sells": [],
+            "gainers": [],
+            "losers": [],
+            "recommendations": [],
+        }
+
+    active_sorted = sorted(merged_rows, key=lambda x: x.get("volume", 0), reverse=True)
+    active_buys = [r for r in active_sorted if (r.get("change_pct") or 0) > 0][:10]
+    active_sells = [r for r in active_sorted if (r.get("change_pct") or 0) < 0][:10]
+    gainers = sorted(merged_rows, key=lambda x: x.get("change_pct") or -999, reverse=True)[:10]
+    losers = sorted(merged_rows, key=lambda x: x.get("change_pct") or 999)[:10]
+    recommendations = _build_recommendations(active_buys, gainers, count=5)
+
+    return {
+        "active_buys": active_buys,
+        "active_sells": active_sells,
+        "gainers": gainers,
+        "losers": losers,
+        "recommendations": recommendations,
+    }
+
+
 def get_market_overview_live() -> dict:
     global LAST_MARKET_OVERVIEW
 
@@ -2021,6 +2141,12 @@ def crypto():
         result=result,
         error=error,
     )
+
+
+@app.get("/crypto/markets")
+def crypto_markets():
+    market = get_crypto_market_overview_live()
+    return render_template("crypto_markets.html", market=market)
 
 
 @app.get("/markets")

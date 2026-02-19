@@ -161,6 +161,14 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Please enter a crypto symbol.", body)
 
+    def test_crypto_markets_page(self):
+        response = self.client.get("/crypto/markets")
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Crypto Markets", body)
+        self.assertIn("TOP 10 Gainers", body)
+
     @patch("app.get_crypto_price_summary")
     @patch("app._fetch_crypto_chart_yahoo")
     @patch("app._resolve_crypto_input")
