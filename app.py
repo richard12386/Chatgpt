@@ -665,7 +665,7 @@ def _scrape_market_table(url: str, retries: int = 1) -> list[dict]:
             rows = []
             for tr in table.find_all("tr")[1:]:
                 cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
-                if len(cells) < 8:
+                if len(cells) < 9:
                     continue
                 symbol = cells[0]
                 change_pct = _extract_change_pct(cells[5])
