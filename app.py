@@ -61,7 +61,8 @@ MAX_SEARCH_HISTORY = 200
 LISTINGS_CACHE_TTL_SECONDS = 21600
 TWO_FA_CODE_TTL_SECONDS = 600
 TWO_FA_MAX_ATTEMPTS = 5
-TWO_FA_FORCE_EMAIL = os.getenv("TWO_FA_FORCE_EMAIL", "1") == "1"
+ENABLE_2FA = os.getenv("ENABLE_2FA", "0") == "1"
+TWO_FA_FORCE_EMAIL = os.getenv("TWO_FA_FORCE_EMAIL", "0") == "1"
 TWO_FA_DEV_SHOW_CODE = os.getenv("TWO_FA_DEV_SHOW_CODE", "1") == "1"
 ALERT_COOLDOWN_SECONDS = 1800
 
@@ -2490,12 +2491,10 @@ def register():
 
         if len(username) < 3:
             error = "Username must have at least 3 characters."
-        elif TWO_FA_FORCE_EMAIL and (
-            not email
-            or len(email) > 254
-            or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)
+        elif email and (
+            len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)
         ):
-            error = "Please provide a valid email for 2FA."
+            error = "Please provide a valid email."
         elif len(password) < 6:
             error = "Password must have at least 6 characters."
         elif password != confirm:
@@ -2509,23 +2508,24 @@ def register():
             if exists:
                 error = "Username already exists."
             else:
-                password_hash = generate_password_hash(password)
-                code = _issue_registration_otp(username, email, password_hash)
-                sent = _send_register_email(email, code)
-                _clear_pending_registration()
-                session["pending_register_username"] = username
-                session["pending_register_email"] = email
-                session["pending_register_password_hash"] = password_hash
-                session["pending_register_created_at"] = int(time.time())
-                if (not sent) and TWO_FA_DEV_SHOW_CODE:
-                    session["pending_register_dev_code"] = code
-                return redirect(url_for("register_verify"))
+                with _db_connect() as conn:
+                    conn.execute(
+                        "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                        (username, email, generate_password_hash(password)),
+                    )
+                    conn.commit()
+                    row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+                _start_authenticated_session(int(row["id"]))
+                return redirect(url_for("index"))
 
     return render_template("register.html", error=error, username=username, email=email)
 
 
 @app.route("/register/verify", methods=["GET", "POST"])
 def register_verify():
+    if not ENABLE_2FA:
+        return redirect(url_for("register"))
+
     username = str(session.get("pending_register_username") or "")
     email = str(session.get("pending_register_email") or "")
     password_hash = str(session.get("pending_register_password_hash") or "")
@@ -2597,31 +2597,38 @@ def login():
         if not row or not check_password_hash(str(row["password_hash"]), password):
             error = "Invalid username or password."
         else:
-            user_id = int(row["id"])
-            email = str(row["email"] or "").strip()
-            if not email and TWO_FA_FORCE_EMAIL:
-                error = "Your account has no email for 2FA. Create a new account with email."
+            if ENABLE_2FA:
+                user_id = int(row["id"])
+                email = str(row["email"] or "").strip()
+                if not email and TWO_FA_FORCE_EMAIL:
+                    error = "Your account has no email for 2FA. Create a new account with email."
+                else:
+                    code = _issue_login_otp(user_id)
+                    sent = _send_2fa_email(email, code) if email else False
+
+                    _clear_pending_2fa()
+                    session["pending_2fa_user_id"] = user_id
+                    session["pending_2fa_next"] = next_url
+                    session["pending_2fa_email"] = _mask_email(email) if email else "N/A"
+                    session["pending_2fa_username"] = username
+                    session["pending_2fa_created_at"] = int(time.time())
+
+                    if (not sent) and app.config.get("DEBUG") and TWO_FA_DEV_SHOW_CODE:
+                        session["pending_2fa_dev_code"] = code
+
+                    return redirect(url_for("login_verify"))
             else:
-                code = _issue_login_otp(user_id)
-                sent = _send_2fa_email(email, code) if email else False
-
-                _clear_pending_2fa()
-                session["pending_2fa_user_id"] = user_id
-                session["pending_2fa_next"] = next_url
-                session["pending_2fa_email"] = _mask_email(email) if email else "N/A"
-                session["pending_2fa_username"] = username
-                session["pending_2fa_created_at"] = int(time.time())
-
-                if (not sent) and app.config.get("DEBUG") and TWO_FA_DEV_SHOW_CODE:
-                    session["pending_2fa_dev_code"] = code
-
-                return redirect(url_for("login_verify"))
+                _start_authenticated_session(int(row["id"]))
+                return redirect(next_url)
 
     return render_template("login.html", error=error, username=username)
 
 
 @app.route("/login/verify", methods=["GET", "POST"])
 def login_verify():
+    if not ENABLE_2FA:
+        return redirect(url_for("login"))
+
     pending_user_id = session.get("pending_2fa_user_id")
     if not pending_user_id:
         return redirect(url_for("login"))

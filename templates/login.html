@@ -8,7 +8,7 @@
     body {
       margin: 0;
       font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
-      background: linear-gradient(140deg, #fdf6e3, #f4f7ff);
+      background: #eef0f2;
       color: #162029;
       min-height: 100vh;
     }
@@ -75,7 +75,6 @@
   <main class="page">
     <section class="card">
       <h1>Login</h1>
-      <p>After password check, we send a 6-digit verification code.</p>
       <form method="post">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <label for="username">Username</label>
