@@ -448,6 +448,7 @@
       <a href="/crypto">Crypto</a>
       <a href="/markets">Markets</a>
       {% if current_user %}
+        <a class="ghost" href="/alerts">Alerts</a>
         <span class="user-pill">User: {{ current_user.username }}</span>
         <div class="spacer"></div>
         <form class="inline-form" method="post" action="/logout">
@@ -584,6 +585,14 @@
         <div class="small-actions">
           <a class="subtle-btn" href="/export.csv?query={{ input_value|urlencode }}&period={{ selected_period }}&threshold={{ selected_threshold }}&granularity={{ selected_granularity }}">Download CSV</a>
           {% if current_user %}
+            <form method="post" action="/alerts/add" class="inline-form">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="asset_type" value="stock">
+              <input type="hidden" name="symbol" value="{{ result.ticker }}">
+              <input type="hidden" name="condition" value="above">
+              <input type="hidden" name="target_price" value="{{ result.current_price or 0 }}">
+              <button type="submit" class="subtle-btn">Alert if Above Current</button>
+            </form>
             {% if result.ticker in watchlist %}
               <form method="post" action="/watchlist/remove" class="inline-form">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">

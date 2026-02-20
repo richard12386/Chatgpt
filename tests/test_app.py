@@ -167,6 +167,37 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/register/verify", response.headers.get("Location", ""))
 
+    def test_alerts_add_and_list(self):
+        with app._db_connect() as conn:
+            conn.execute(
+                "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                ("bob", "bob@example.com", app.generate_password_hash("secret123")),
+            )
+            conn.commit()
+            row = conn.execute("SELECT id FROM users WHERE username = ?", ("bob",)).fetchone()
+            user_id = int(row["id"])
+
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = user_id
+
+        add_resp = self.client.post(
+            "/alerts/add",
+            data={
+                "asset_type": "stock",
+                "symbol": "AAPL",
+                "condition": "above",
+                "target_price": "200",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(add_resp.status_code, 302)
+
+        page = self.client.get("/alerts")
+        body = page.get_data(as_text=True)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Price Alerts", body)
+        self.assertIn("AAPL", body)
+
     @patch("app._send_2fa_email", return_value=True)
     @patch("app.random.randint", return_value=123456)
     def test_login_redirects_to_2fa_verify(self, _rand_mock: Mock, _send_mock: Mock):

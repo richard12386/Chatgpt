@@ -209,6 +209,7 @@
       <a class="active" href="/crypto">Crypto</a>
       <a href="/crypto/markets">Crypto Markets</a>
       {% if current_user %}
+        <a class="ghost" href="/alerts">Alerts</a>
         <span class="user-pill">User: {{ current_user.username }}</span>
         <div class="spacer"></div>
         <form class="inline-form" method="post" action="/logout">
@@ -260,6 +261,16 @@
         </div>
         <p class="subtle">Chart source: Yahoo Finance | Price validation sources: CoinMarketCap, Yahoo, CoinGecko API, Binance API | As of {{ result.as_of }}</p>
         <p id="hoverReadout" class="hover-readout">Move mouse over the chart to see live price.</p>
+        {% if current_user %}
+        <form method="post" action="/alerts/add" class="query-form" style="margin-top:0.5rem;">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="asset_type" value="crypto">
+          <input type="hidden" name="symbol" value="{{ result.symbol }}">
+          <input type="hidden" name="condition" value="above">
+          <input type="text" name="target_price" value="{{ '%.6f'|format(result.current_price_usd or 0) }}" required>
+          <button type="submit">Add Price Alert</button>
+        </form>
+        {% endif %}
       </article>
 
       <article class="card">

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alerts</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+      background: linear-gradient(140deg, #fdf6e3, #f4f7ff);
+      color: #162029;
+      min-height: 100vh;
+    }
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 1.3rem 1rem 2rem;
+    }
+    .topnav {
+      margin-bottom: 0.75rem;
+      border-bottom: 2px solid #0f766e;
+      padding-bottom: 0.35rem;
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .topnav a, .topnav button {
+      border: 1px solid #dbe2ea;
+      color: #334155;
+      background: #f8fafc;
+      text-decoration: none;
+      font-weight: 800;
+      padding: 0.44rem 0.7rem;
+      border-radius: 8px;
+      display: inline-block;
+      cursor: pointer;
+    }
+    .topnav a.active {
+      background: #dbeafe;
+      color: #1e3a8a;
+      border-color: #93c5fd;
+    }
+    .spacer { flex: 1; }
+    .card {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid #d9dee4;
+      border-radius: 16px;
+      padding: 1rem;
+      box-shadow: 0 12px 28px rgba(22, 32, 41, 0.08);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid #d9dee4;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    th, td {
+      border-bottom: 1px solid #d9dee4;
+      padding: 0.55rem 0.65rem;
+      text-align: left;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .inline-form { margin: 0; display: inline; }
+    .empty { color: #5f6b76; }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <nav class="topnav" aria-label="Primary">
+      <a href="/">Stocks</a>
+      <a href="/crypto">Crypto</a>
+      <a class="active" href="/alerts">Alerts</a>
+      <span>User: {{ current_user.username }}</span>
+      <div class="spacer"></div>
+      <form class="inline-form" method="post" action="/logout">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Logout</button>
+      </form>
+    </nav>
+
+    <section class="card">
+      <h1>Price Alerts</h1>
+      <p>Create alerts from Stocks/Crypto pages. Email is sent when condition is triggered.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Symbol</th>
+            <th>Condition</th>
+            <th>Target</th>
+            <th>Last Trigger</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in alerts %}
+          <tr>
+            <td>{{ a.asset_type }}</td>
+            <td>{{ a.symbol }}</td>
+            <td>{{ a.condition }}</td>
+            <td>{{ "%.6f"|format(a.target_price) }}</td>
+            <td>{% if a.last_triggered_ts %}{{ a.last_triggered_ts|int }}{% else %}Never{% endif %}</td>
+            <td>
+              <form class="inline-form" method="post" action="/alerts/remove">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="alert_id" value="{{ a.id }}">
+                <button type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not alerts %}
+          <tr><td colspan="6" class="empty">No alerts yet.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

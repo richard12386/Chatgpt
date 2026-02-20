@@ -159,6 +159,7 @@
       <a href="/crypto">Crypto</a>
       <a class="active" href="/crypto/markets">Crypto Markets</a>
       {% if current_user %}
+        <a class="ghost" href="/alerts">Alerts</a>
         <span class="user-pill">User: {{ current_user.username }}</span>
         <div class="spacer"></div>
         <form class="inline-form" method="post" action="/logout">

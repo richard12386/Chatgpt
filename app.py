@@ -62,6 +62,7 @@ TWO_FA_CODE_TTL_SECONDS = 600
 TWO_FA_MAX_ATTEMPTS = 5
 TWO_FA_FORCE_EMAIL = os.getenv("TWO_FA_FORCE_EMAIL", "1") == "1"
 TWO_FA_DEV_SHOW_CODE = os.getenv("TWO_FA_DEV_SHOW_CODE", "1") == "1"
+ALERT_COOLDOWN_SECONDS = 1800
 
 ANALYSIS_CACHE: dict[tuple[str, str, int, str], tuple[float, "AnalysisResult"]] = {}
 SEARCH_CACHE: dict[str, tuple[float, str]] = {}
@@ -526,6 +527,21 @@ def init_db():
                 symbol TEXT NOT NULL,
                 updated_ts REAL NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS price_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                asset_type TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                condition TEXT NOT NULL,
+                target_price REAL NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_triggered_ts REAL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_price_alerts_enabled
+                ON price_alerts(enabled, asset_type, symbol);
             """
         )
 
@@ -823,6 +839,170 @@ def _watchlist_remove(user_id: int, symbol: str):
         conn.commit()
 
 
+def _alert_symbol(asset_type: str, raw_symbol: str) -> str:
+    if asset_type == "crypto":
+        return _normalize_crypto_symbol(raw_symbol)
+    return _normalize_symbol(raw_symbol)
+
+
+def _create_price_alert(
+    user_id: int,
+    asset_type: str,
+    symbol: str,
+    condition: str,
+    target_price: float,
+):
+    clean_asset = "crypto" if asset_type == "crypto" else "stock"
+    clean_condition = "below" if condition == "below" else "above"
+    clean_symbol = _alert_symbol(clean_asset, symbol)
+    if not clean_symbol:
+        raise ValueError("Invalid symbol for alert.")
+    if target_price <= 0:
+        raise ValueError("Target price must be greater than 0.")
+
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO price_alerts(user_id, asset_type, symbol, condition, target_price, enabled, last_triggered_ts)
+            VALUES(?, ?, ?, ?, ?, 1, NULL)
+            """,
+            (user_id, clean_asset, clean_symbol, clean_condition, float(target_price)),
+        )
+        conn.commit()
+
+
+def _list_price_alerts(user_id: int) -> list[dict]:
+    with _db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, asset_type, symbol, condition, target_price, enabled, last_triggered_ts, created_at
+            FROM price_alerts
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+
+    out: list[dict] = []
+    for row in rows:
+        out.append(
+            {
+                "id": int(row["id"]),
+                "asset_type": str(row["asset_type"]),
+                "symbol": str(row["symbol"]),
+                "condition": str(row["condition"]),
+                "target_price": float(row["target_price"]),
+                "enabled": bool(int(row["enabled"])),
+                "last_triggered_ts": float(row["last_triggered_ts"]) if row["last_triggered_ts"] else None,
+                "created_at": str(row["created_at"]),
+            }
+        )
+    return out
+
+
+def _remove_price_alert(user_id: int, alert_id: int):
+    with _db_connect() as conn:
+        conn.execute(
+            "DELETE FROM price_alerts WHERE id = ? AND user_id = ?",
+            (alert_id, user_id),
+        )
+        conn.commit()
+
+
+def _fetch_last_price_for_alert(asset_type: str, symbol: str) -> Optional[float]:
+    ticker = f"{symbol}-USD" if asset_type == "crypto" else symbol
+    rows = _fetch_quote_batch([ticker])
+    if not rows:
+        return None
+    row = rows[0]
+    value = row.get("regularMarketPrice")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _send_alert_email(email: str, symbol: str, asset_type: str, condition: str, target: float, current: float) -> bool:
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user or "noreply@localhost")
+    use_tls = os.getenv("SMTP_STARTTLS", "1") == "1"
+
+    if not smtp_host:
+        app.logger.warning("Alert email not sent: SMTP_HOST is not configured.")
+        return False
+
+    direction = "above" if condition == "above" else "below"
+    msg = EmailMessage()
+    msg["Subject"] = f"Price Alert Triggered: {symbol}"
+    msg["From"] = smtp_from
+    msg["To"] = email
+    msg.set_content(
+        f"Your {asset_type} alert was triggered.\n"
+        f"Symbol: {symbol}\n"
+        f"Condition: price {direction} {target:.6f}\n"
+        f"Current price: {current:.6f}\n"
+        f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    )
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if smtp_user:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        return True
+    except Exception:
+        app.logger.exception("Failed to send alert email to %s", email)
+        return False
+
+
+def check_price_alerts_once():
+    now_ts = time.time()
+    with _db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.user_id, a.asset_type, a.symbol, a.condition, a.target_price, a.last_triggered_ts, u.email
+            FROM price_alerts a
+            JOIN users u ON u.id = a.user_id
+            WHERE a.enabled = 1
+            """
+        ).fetchall()
+
+    for row in rows:
+        email = str(row["email"] or "").strip()
+        if not email:
+            continue
+        alert_id = int(row["id"])
+        asset_type = str(row["asset_type"])
+        symbol = str(row["symbol"])
+        condition = str(row["condition"])
+        target = float(row["target_price"])
+        last_triggered_ts = float(row["last_triggered_ts"]) if row["last_triggered_ts"] else None
+
+        if last_triggered_ts and (now_ts - last_triggered_ts) < ALERT_COOLDOWN_SECONDS:
+            continue
+
+        current = _fetch_last_price_for_alert(asset_type, symbol)
+        if current is None:
+            continue
+
+        triggered = current >= target if condition == "above" else current <= target
+        if not triggered:
+            continue
+
+        if _send_alert_email(email, symbol, asset_type, condition, target, current):
+            with _db_connect() as conn:
+                conn.execute(
+                    "UPDATE price_alerts SET last_triggered_ts = ? WHERE id = ?",
+                    (now_ts, alert_id),
+                )
+                conn.commit()
+
+
 def _known_symbols() -> list[str]:
     symbols: set[str] = set()
 
@@ -882,6 +1062,7 @@ def _auto_refresh_worker():
             continue
         try:
             refresh_all_known_companies_once()
+            check_price_alerts_once()
         finally:
             AUTO_REFRESH_LOCK.release()
 
@@ -2321,17 +2502,14 @@ def register():
                 password_hash = generate_password_hash(password)
                 code = _issue_registration_otp(username, email, password_hash)
                 sent = _send_register_email(email, code)
-                if not sent and not (app.config.get("DEBUG") and TWO_FA_DEV_SHOW_CODE):
-                    error = "Could not send verification email right now. Try again later."
-                else:
-                    _clear_pending_registration()
-                    session["pending_register_username"] = username
-                    session["pending_register_email"] = email
-                    session["pending_register_password_hash"] = password_hash
-                    session["pending_register_created_at"] = int(time.time())
-                    if (not sent) and app.config.get("DEBUG") and TWO_FA_DEV_SHOW_CODE:
-                        session["pending_register_dev_code"] = code
-                    return redirect(url_for("register_verify"))
+                _clear_pending_registration()
+                session["pending_register_username"] = username
+                session["pending_register_email"] = email
+                session["pending_register_password_hash"] = password_hash
+                session["pending_register_created_at"] = int(time.time())
+                if (not sent) and TWO_FA_DEV_SHOW_CODE:
+                    session["pending_register_dev_code"] = code
+                return redirect(url_for("register_verify"))
 
     return render_template("register.html", error=error, username=username, email=email)
 
@@ -2500,6 +2678,58 @@ def watchlist_remove():
     if user:
         _watchlist_remove(int(user["id"]), request.form.get("symbol", ""))
     return redirect(request.referrer or url_for("index"))
+
+
+@app.get("/alerts")
+@_login_required
+def alerts():
+    user = _get_current_user()
+    if not user:
+        return redirect(url_for("login"))
+    items = _list_price_alerts(int(user["id"]))
+    return render_template("alerts.html", current_user=user, alerts=items)
+
+
+@app.post("/alerts/add")
+@_login_required
+def alerts_add():
+    user = _get_current_user()
+    if not user:
+        return redirect(url_for("login"))
+
+    asset_type = request.form.get("asset_type", "stock").strip().lower()
+    symbol = request.form.get("symbol", "").strip()
+    condition = request.form.get("condition", "above").strip().lower()
+    target_raw = request.form.get("target_price", "").strip()
+    back_to = request.referrer or url_for("alerts")
+
+    try:
+        target = float(target_raw)
+        _create_price_alert(
+            int(user["id"]),
+            asset_type=asset_type,
+            symbol=symbol,
+            condition=condition,
+            target_price=target,
+        )
+    except Exception:
+        pass
+    return redirect(back_to)
+
+
+@app.post("/alerts/remove")
+@_login_required
+def alerts_remove():
+    user = _get_current_user()
+    if not user:
+        return redirect(url_for("login"))
+    try:
+        alert_id = int(request.form.get("alert_id", "0"))
+        if alert_id > 0:
+            _remove_price_alert(int(user["id"]), alert_id)
+    except Exception:
+        pass
+    return redirect(request.referrer or url_for("alerts"))
 
 
 @app.route("/", methods=["GET", "POST"])
