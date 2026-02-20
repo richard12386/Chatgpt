@@ -35,6 +35,7 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_SECURE_COOKIE", "0") == "1"
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 app.permanent_session_lifetime = timedelta(hours=12)
+APP_BOOT_TOKEN = secrets.token_urlsafe(16)
 DB_PATH = os.path.join(os.path.dirname(__file__), "app.db")
 
 PERIOD_OPTIONS = [
@@ -559,12 +560,21 @@ def _get_current_user() -> Optional[dict[str, str | int]]:
     user_id = session.get("user_id")
     if not user_id:
         return None
+    if session.get("auth_boot_token") != APP_BOOT_TOKEN:
+        session.clear()
+        return None
     with _db_connect() as conn:
         row = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,)).fetchone()
     if not row:
         session.clear()
         return None
     return {"id": int(row["id"]), "username": str(row["username"])}
+
+
+def _start_authenticated_session(user_id: int):
+    session["user_id"] = int(user_id)
+    session["auth_boot_token"] = APP_BOOT_TOKEN
+    session.permanent = True
 
 
 def _mask_email(email: str) -> str:
@@ -2551,7 +2561,7 @@ def register_verify():
                                 "SELECT id FROM users WHERE username = ?",
                                 (username,),
                             ).fetchone()
-                        session["user_id"] = int(row["id"])
+                        _start_authenticated_session(int(row["id"]))
                         _clear_pending_registration()
                         return redirect(url_for("index"))
                     except sqlite3.IntegrityError:
@@ -2635,7 +2645,7 @@ def login_verify():
                     error = message
                 else:
                     next_url = str(session.get("pending_2fa_next") or url_for("index"))
-                    session["user_id"] = int(pending_user_id)
+                    _start_authenticated_session(int(pending_user_id))
                     _clear_pending_2fa()
                     return redirect(next_url if _is_safe_next_url(next_url) else url_for("index"))
 

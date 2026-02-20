@@ -238,6 +238,7 @@ class RouteTests(unittest.TestCase):
 
         with self.client.session_transaction() as sess:
             sess["user_id"] = user_id
+            sess["auth_boot_token"] = app.APP_BOOT_TOKEN
 
         add_resp = self.client.post(
             "/alerts/add",
@@ -282,6 +283,7 @@ class RouteTests(unittest.TestCase):
 
         with self.client.session_transaction() as sess:
             sess["user_id"] = user_id
+            sess["auth_boot_token"] = app.APP_BOOT_TOKEN
 
         response = self.client.post("/alerts/remove", data={"alert_id": str(alert_id)}, follow_redirects=False)
         self.assertEqual(response.status_code, 302)
