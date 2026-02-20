@@ -497,6 +497,21 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_login_otp_user_created
                 ON login_otp(user_id, created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS registration_otp (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                email TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                expires_ts REAL NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                consumed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_registration_otp_email_created
+                ON registration_otp(email, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -561,6 +576,17 @@ def _clear_pending_2fa():
         session.pop(key, None)
 
 
+def _clear_pending_registration():
+    for key in (
+        "pending_register_username",
+        "pending_register_email",
+        "pending_register_password_hash",
+        "pending_register_created_at",
+        "pending_register_dev_code",
+    ):
+        session.pop(key, None)
+
+
 def _send_2fa_email(email: str, code: str) -> bool:
     smtp_host = os.getenv("SMTP_HOST", "").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
@@ -596,6 +622,40 @@ def _send_2fa_email(email: str, code: str) -> bool:
         return False
 
 
+def _send_register_email(email: str, code: str) -> bool:
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user or "noreply@localhost")
+    use_tls = os.getenv("SMTP_STARTTLS", "1") == "1"
+
+    if not smtp_host:
+        app.logger.warning("Registration email not sent: SMTP_HOST is not configured.")
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = "Confirm your account"
+    msg["From"] = smtp_from
+    msg["To"] = email
+    msg.set_content(
+        f"Your registration verification code is: {code}\n"
+        f"It expires in {TWO_FA_CODE_TTL_SECONDS // 60} minutes."
+    )
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if smtp_user:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        return True
+    except Exception:
+        app.logger.exception("Failed to send registration email to %s", email)
+        return False
+
+
 def _issue_login_otp(user_id: int) -> str:
     code = f"{random.randint(0, 999999):06d}"
     code_hash = _otp_hash(code)
@@ -617,6 +677,76 @@ def _issue_login_otp(user_id: int) -> str:
         )
         conn.commit()
     return code
+
+
+def _issue_registration_otp(username: str, email: str, password_hash: str) -> str:
+    code = f"{random.randint(0, 999999):06d}"
+    code_hash = _otp_hash(code)
+    expires_ts = time.time() + TWO_FA_CODE_TTL_SECONDS
+    now_ts = time.time()
+
+    with _db_connect() as conn:
+        conn.execute(
+            "DELETE FROM registration_otp WHERE username = ? OR email = ?",
+            (username, email),
+        )
+        conn.execute(
+            """
+            INSERT INTO registration_otp(username, email, password_hash, code_hash, expires_ts, attempts, consumed_at)
+            VALUES(?, ?, ?, ?, ?, 0, NULL)
+            """,
+            (username, email, password_hash, code_hash, expires_ts),
+        )
+        conn.execute(
+            "DELETE FROM registration_otp WHERE expires_ts < ? OR consumed_at IS NOT NULL",
+            (now_ts - 300,),
+        )
+        conn.commit()
+    return code
+
+
+def _verify_registration_otp(username: str, email: str, code: str) -> tuple[bool, str]:
+    now_ts = time.time()
+    with _db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, code_hash, expires_ts, attempts
+            FROM registration_otp
+            WHERE username = ? AND email = ? AND consumed_at IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (username, email),
+        ).fetchone()
+        if not row:
+            return False, "Verification session expired. Please register again."
+
+        otp_id = int(row["id"])
+        attempts = int(row["attempts"])
+        expires_ts = float(row["expires_ts"])
+        stored_hash = str(row["code_hash"])
+
+        if now_ts > expires_ts:
+            conn.execute("DELETE FROM registration_otp WHERE id = ?", (otp_id,))
+            conn.commit()
+            return False, "Code expired. Please register again."
+
+        if attempts >= TWO_FA_MAX_ATTEMPTS:
+            conn.execute("DELETE FROM registration_otp WHERE id = ?", (otp_id,))
+            conn.commit()
+            return False, "Too many invalid attempts. Please register again."
+
+        if not hmac.compare_digest(_otp_hash(code), stored_hash):
+            conn.execute("UPDATE registration_otp SET attempts = attempts + 1 WHERE id = ?", (otp_id,))
+            conn.commit()
+            return False, "Invalid code."
+
+        conn.execute(
+            "UPDATE registration_otp SET consumed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (otp_id,),
+        )
+        conn.commit()
+    return True, ""
 
 
 def _verify_login_otp(user_id: int, code: str) -> tuple[bool, str]:
@@ -2180,20 +2310,83 @@ def register():
         elif password != confirm:
             error = "Passwords do not match."
         else:
-            try:
-                with _db_connect() as conn:
-                    conn.execute(
-                        "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
-                        (username, email, generate_password_hash(password)),
-                    )
-                    conn.commit()
-                    row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
-                session["user_id"] = int(row["id"])
-                return redirect(url_for("index"))
-            except sqlite3.IntegrityError:
+            with _db_connect() as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM users WHERE username = ?",
+                    (username,),
+                ).fetchone()
+            if exists:
                 error = "Username already exists."
+            else:
+                password_hash = generate_password_hash(password)
+                code = _issue_registration_otp(username, email, password_hash)
+                sent = _send_register_email(email, code)
+                if not sent and not (app.config.get("DEBUG") and TWO_FA_DEV_SHOW_CODE):
+                    error = "Could not send verification email right now. Try again later."
+                else:
+                    _clear_pending_registration()
+                    session["pending_register_username"] = username
+                    session["pending_register_email"] = email
+                    session["pending_register_password_hash"] = password_hash
+                    session["pending_register_created_at"] = int(time.time())
+                    if (not sent) and app.config.get("DEBUG") and TWO_FA_DEV_SHOW_CODE:
+                        session["pending_register_dev_code"] = code
+                    return redirect(url_for("register_verify"))
 
     return render_template("register.html", error=error, username=username, email=email)
+
+
+@app.route("/register/verify", methods=["GET", "POST"])
+def register_verify():
+    username = str(session.get("pending_register_username") or "")
+    email = str(session.get("pending_register_email") or "")
+    password_hash = str(session.get("pending_register_password_hash") or "")
+    if not username or not email or not password_hash:
+        return redirect(url_for("register"))
+
+    error: Optional[str] = None
+    created_at = int(session.get("pending_register_created_at", 0))
+    if created_at and time.time() - created_at > TWO_FA_CODE_TTL_SECONDS:
+        _clear_pending_registration()
+        return redirect(url_for("register"))
+
+    if request.method == "POST":
+        if not _rate_limit(scope="register-2fa", limit=20, window_seconds=60):
+            error = "Too many attempts. Wait a minute and try again."
+        else:
+            code = re.sub(r"\D", "", request.form.get("code", ""))
+            if len(code) != 6:
+                error = "Enter the 6-digit code."
+            else:
+                ok, message = _verify_registration_otp(username, email, code)
+                if not ok:
+                    error = message
+                else:
+                    try:
+                        with _db_connect() as conn:
+                            conn.execute(
+                                "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                                (username, email, password_hash),
+                            )
+                            conn.commit()
+                            row = conn.execute(
+                                "SELECT id FROM users WHERE username = ?",
+                                (username,),
+                            ).fetchone()
+                        session["user_id"] = int(row["id"])
+                        _clear_pending_registration()
+                        return redirect(url_for("index"))
+                    except sqlite3.IntegrityError:
+                        _clear_pending_registration()
+                        return redirect(url_for("login"))
+
+    return render_template(
+        "register_verify.html",
+        error=error,
+        username=username,
+        masked_email=_mask_email(email),
+        dev_code=session.get("pending_register_dev_code"),
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -2280,6 +2473,7 @@ def login_verify():
 @app.post("/logout")
 def logout():
     _clear_pending_2fa()
+    _clear_pending_registration()
     session.clear()
     return redirect(url_for("index"))
 

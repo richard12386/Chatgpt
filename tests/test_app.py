@@ -151,6 +151,22 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["status"], "ok")
 
+    @patch("app._send_register_email", return_value=True)
+    @patch("app.random.randint", return_value=654321)
+    def test_register_redirects_to_email_verify(self, _rand_mock: Mock, _send_mock: Mock):
+        response = self.client.post(
+            "/register",
+            data={
+                "username": "newuser",
+                "email": "newuser@example.com",
+                "password": "secret123",
+                "confirm_password": "secret123",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/register/verify", response.headers.get("Location", ""))
+
     @patch("app._send_2fa_email", return_value=True)
     @patch("app.random.randint", return_value=123456)
     def test_login_redirects_to_2fa_verify(self, _rand_mock: Mock, _send_mock: Mock):
