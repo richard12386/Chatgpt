@@ -451,6 +451,7 @@
         <span class="user-pill">User: {{ current_user.username }}</span>
         <div class="spacer"></div>
         <form class="inline-form" method="post" action="/logout">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <button class="logout-btn" type="submit">Logout</button>
         </form>
       {% else %}
@@ -464,6 +465,7 @@
       <h1>Yahoo Finance Stock Analyzer</h1>
       <p class="lead">Analyze weekly volatility, dividends, company profile, and export results.</p>
       <form method="post">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div class="form-main">
           <label for="ticker">Ticker or Company Name</label>
           <input id="ticker" type="text" name="ticker" value="{{ input_value }}" placeholder="e.g. AAPL or Thales" required>
@@ -529,6 +531,7 @@
             <option value="date">Group by Date</option>
           </select>
           <form method="post" action="/recent/clear" class="inline-form">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="history-clear-btn">Remove All History</button>
           </form>
         </div>
@@ -583,11 +586,13 @@
           {% if current_user %}
             {% if result.ticker in watchlist %}
               <form method="post" action="/watchlist/remove" class="inline-form">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="symbol" value="{{ result.ticker }}">
                 <button type="submit" class="subtle-btn">Remove from Watchlist</button>
               </form>
             {% else %}
               <form method="post" action="/watchlist/add" class="inline-form">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="symbol" value="{{ result.ticker }}">
                 <button type="submit" class="subtle-btn">Add to Watchlist</button>
               </form>

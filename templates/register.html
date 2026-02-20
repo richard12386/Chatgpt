@@ -76,6 +76,7 @@
     <section class="card">
       <h1>Create Account</h1>
       <form method="post">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <label for="username">Username</label>
         <input id="username" name="username" type="text" value="{{ username }}" required>
 

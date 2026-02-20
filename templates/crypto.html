@@ -57,6 +57,31 @@
       color: #1e3a8a;
       border-color: #93c5fd;
     }
+    .topnav .ghost {
+      background: #f8fafc;
+      color: #334155;
+      border: 1px solid #dbe2ea;
+    }
+    .topnav .user-pill {
+      background: #f8fafc;
+      color: #334155;
+      border: 1px solid #dbe2ea;
+      border-radius: 8px;
+      padding: 0.44rem 0.7rem;
+      font-weight: 800;
+      font-size: 0.9rem;
+    }
+    .topnav .spacer { flex: 1; }
+    .inline-form { margin: 0; display: inline; }
+    .logout-btn {
+      border: 1px solid #dbe2ea;
+      color: #334155;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 0.44rem 0.7rem;
+      font-weight: 800;
+      cursor: pointer;
+    }
     .hero, .card {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -165,6 +190,12 @@
       color: var(--muted);
       font-size: 0.84rem;
     }
+    .hover-readout {
+      margin-top: 0.25rem;
+      font-weight: 700;
+      color: #0c4a6e;
+      min-height: 1.2em;
+    }
     @media (max-width: 650px) {
       .query-form { grid-template-columns: 1fr; }
       .chart-wrap { height: 320px; }
@@ -177,12 +208,25 @@
       <a href="/">Stocks</a>
       <a class="active" href="/crypto">Crypto</a>
       <a href="/crypto/markets">Crypto Markets</a>
+      {% if current_user %}
+        <span class="user-pill">User: {{ current_user.username }}</span>
+        <div class="spacer"></div>
+        <form class="inline-form" method="post" action="/logout">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <button class="logout-btn" type="submit">Logout</button>
+        </form>
+      {% else %}
+        <div class="spacer"></div>
+        <a class="ghost" href="/login">Login</a>
+        <a class="ghost" href="/register">Register</a>
+      {% endif %}
     </nav>
 
     <section class="hero">
       <h1>Crypto Hub</h1>
       <p class="lead">Type symbol or full coin name (e.g. BTC, ETH, Solana, Cardano) to load live chart.</p>
       <form class="query-form" method="post">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="text" name="symbol" value="{{ input_value }}" placeholder="e.g. BTC or Bitcoin" required>
         <button type="submit">Load Chart</button>
       </form>
@@ -215,6 +259,7 @@
           </form>
         </div>
         <p class="subtle">Chart source: Yahoo Finance | Price validation sources: CoinMarketCap, Yahoo, CoinGecko API, Binance API | As of {{ result.as_of }}</p>
+        <p id="hoverReadout" class="hover-readout">Move mouse over the chart to see live price.</p>
       </article>
 
       <article class="card">
@@ -232,8 +277,55 @@
     const points = {{ result.points|tojson }};
     const labels = points.map((p) => p.label);
     const prices = points.map((p) => p.price);
+    const hoverReadout = document.getElementById("hoverReadout");
     const up = {{ "true" if (result.change_pct is not none and result.change_pct >= 0) else "false" }};
     const lineColor = up ? "#16a34a" : "#ef4444";
+
+    function formatUsd(value) {
+      if (!Number.isFinite(value)) return "N/A";
+      return "$" + value.toFixed(6);
+    }
+
+    function interpolateAtX(chart, pixelX) {
+      if (!prices.length) return null;
+      if (prices.length === 1) {
+        return { price: prices[0], indexFloat: 0, label: labels[0] || "" };
+      }
+      const xScale = chart.scales.x;
+      const firstX = xScale.getPixelForValue(0);
+      const lastX = xScale.getPixelForValue(prices.length - 1);
+      if (lastX <= firstX) return null;
+
+      const clamped = Math.max(firstX, Math.min(lastX, pixelX));
+      const ratio = (clamped - firstX) / (lastX - firstX);
+      const indexFloat = ratio * (prices.length - 1);
+      const i0 = Math.floor(indexFloat);
+      const i1 = Math.min(prices.length - 1, i0 + 1);
+      const t = indexFloat - i0;
+      const p0 = Number(prices[i0]);
+      const p1 = Number(prices[i1]);
+      const interp = p0 + (p1 - p0) * t;
+      const nearestLabel = labels[Math.round(indexFloat)] || "";
+      return { price: interp, indexFloat, label: nearestLabel };
+    }
+
+    const crosshairPlugin = {
+      id: "crosshairPlugin",
+      afterDatasetsDraw(chart) {
+        if (!Number.isFinite(chart.$hoverX)) return;
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+        const x = Math.max(chartArea.left, Math.min(chartArea.right, chart.$hoverX));
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(14, 116, 144, 0.45)";
+        ctx.stroke();
+        ctx.restore();
+      },
+    };
 
     const ctx = document.getElementById("cryptoChart").getContext("2d");
     new Chart(ctx, {
@@ -254,9 +346,23 @@
       options: {
         maintainAspectRatio: false,
         animation: { duration: 450 },
+        interaction: {
+          mode: "index",
+          intersect: false
+        },
+        onHover: (event, _active, chart) => {
+          const native = event && event.native;
+          if (!native) return;
+          const hit = interpolateAtX(chart, native.offsetX);
+          if (!hit) return;
+          chart.$hoverX = native.offsetX;
+          hoverReadout.textContent = `${hit.label} | ${formatUsd(hit.price)}`;
+          chart.draw();
+        },
         plugins: {
           legend: { display: false },
           tooltip: {
+            intersect: false,
             callbacks: {
               label: function(context) {
                 return "$" + Number(context.raw).toFixed(6);
@@ -271,7 +377,13 @@
             beginAtZero: false
           }
         }
-      }
+      },
+      plugins: [crosshairPlugin]
+    });
+
+    const canvas = document.getElementById("cryptoChart");
+    canvas.addEventListener("mouseleave", () => {
+      hoverReadout.textContent = "Move mouse over the chart to see live price.";
     });
   </script>
   {% endif %}

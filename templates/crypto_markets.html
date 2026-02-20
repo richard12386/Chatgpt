@@ -51,6 +51,31 @@
       color: #1e3a8a;
       border-color: #93c5fd;
     }
+    .mode-nav .ghost {
+      background: #f8fafc;
+      color: #334155;
+      border: 1px solid #dbe2ea;
+    }
+    .mode-nav .user-pill {
+      background: #f8fafc;
+      color: #334155;
+      border: 1px solid #dbe2ea;
+      border-radius: 8px;
+      padding: 0.42rem 0.65rem;
+      font-weight: 800;
+      font-size: 0.9rem;
+    }
+    .mode-nav .spacer { flex: 1; }
+    .inline-form { margin: 0; display: inline; }
+    .logout-btn {
+      border: 1px solid #dbe2ea;
+      color: #334155;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 0.42rem 0.65rem;
+      font-weight: 800;
+      cursor: pointer;
+    }
     .back {
       display: inline-block;
       text-decoration: none;
@@ -133,6 +158,18 @@
       <a href="/">Stocks</a>
       <a href="/crypto">Crypto</a>
       <a class="active" href="/crypto/markets">Crypto Markets</a>
+      {% if current_user %}
+        <span class="user-pill">User: {{ current_user.username }}</span>
+        <div class="spacer"></div>
+        <form class="inline-form" method="post" action="/logout">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <button class="logout-btn" type="submit">Logout</button>
+        </form>
+      {% else %}
+        <div class="spacer"></div>
+        <a class="ghost" href="/login">Login</a>
+        <a class="ghost" href="/register">Register</a>
+      {% endif %}
     </nav>
     <a class="back" href="/crypto">&larr; Back to crypto hub</a>
     <h1>Crypto Markets</h1>

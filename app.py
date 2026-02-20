@@ -3,17 +3,20 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 import csv
+import hmac
 import io
 import math
 import os
 import random
 import re
+import secrets
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from threading import Event, Lock, Thread
 from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 import yfinance as yf
@@ -25,6 +28,11 @@ from yfinance.exceptions import YFRateLimitError
 app = Flask(__name__)
 app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "0") == "1"
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-only-change-me")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_SECURE_COOKIE", "0") == "1"
+app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
+app.permanent_session_lifetime = timedelta(hours=12)
 DB_PATH = os.path.join(os.path.dirname(__file__), "app.db")
 
 PERIOD_OPTIONS = [
@@ -59,6 +67,8 @@ AUTO_REFRESH_STOP = Event()
 AUTO_REFRESH_LOCK = Lock()
 AUTO_REFRESH_THREAD: Optional[Thread] = None
 AUTO_REFRESH_LAST_RUN_AT: Optional[float] = None
+REQUEST_RATE_BUCKETS: dict[str, deque[float]] = {}
+REQUEST_RATE_LOCK = Lock()
 
 # Global-ish liquid tickers (US + EU + Asia) in Yahoo symbol format.
 MARKET_URLS = {
@@ -597,6 +607,92 @@ def start_auto_refresh():
     AUTO_REFRESH_STOP.clear()
     AUTO_REFRESH_THREAD = Thread(target=_auto_refresh_worker, daemon=True, name="auto-refresh")
     AUTO_REFRESH_THREAD.start()
+
+
+def _client_ip() -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def _rate_limit(scope: str, limit: int, window_seconds: int) -> bool:
+    now = time.time()
+    key = f"{scope}:{_client_ip()}"
+    with REQUEST_RATE_LOCK:
+        bucket = REQUEST_RATE_BUCKETS.setdefault(key, deque())
+        while bucket and now - bucket[0] > window_seconds:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            return False
+        bucket.append(now)
+    return True
+
+
+def _is_safe_next_url(next_url: str) -> bool:
+    if not next_url:
+        return False
+    parsed = urlparse(next_url)
+    return not parsed.scheme and not parsed.netloc and next_url.startswith("/")
+
+
+def _csrf_token() -> str:
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["_csrf_token"] = token
+    return token
+
+
+@app.context_processor
+def _inject_template_security():
+    return {"csrf_token": _csrf_token}
+
+
+@app.before_request
+def _security_checks():
+    if request.method != "POST":
+        return None
+
+    if not _rate_limit(scope="post", limit=80, window_seconds=60):
+        return ("Too many requests. Please slow down and try again.", 429)
+
+    if request.path in {"/login", "/register"} and not _rate_limit(
+        scope="auth", limit=15, window_seconds=60
+    ):
+        return ("Too many login/register attempts. Try again in a minute.", 429)
+
+    if app.config.get("TESTING"):
+        return None
+
+    token = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token")
+    expected = session.get("_csrf_token")
+    if not token or not expected or not hmac.compare_digest(token, expected):
+        return ("Security check failed (invalid CSRF token). Refresh page and try again.", 400)
+    return None
+
+
+@app.after_request
+def _set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    if request.is_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 def _login_required(func):
@@ -1944,7 +2040,8 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        next_url = request.args.get("next") or url_for("index")
+        next_candidate = request.args.get("next", "")
+        next_url = next_candidate if _is_safe_next_url(next_candidate) else url_for("index")
 
         with _db_connect() as conn:
             row = conn.execute(
@@ -2146,7 +2243,8 @@ def crypto():
 @app.get("/crypto/markets")
 def crypto_markets():
     market = get_crypto_market_overview_live()
-    return render_template("crypto_markets.html", market=market)
+    current_user = _get_current_user()
+    return render_template("crypto_markets.html", market=market, current_user=current_user)
 
 
 @app.get("/markets")
