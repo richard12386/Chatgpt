@@ -10,9 +10,11 @@ import os
 import random
 import re
 import secrets
+import smtplib
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from functools import wraps
 from threading import Event, Lock, Thread
 from typing import Optional
@@ -56,6 +58,10 @@ AUTO_REFRESH_INTERVAL_SECONDS = 60
 MAX_RECENT_SEARCHES = 4
 MAX_SEARCH_HISTORY = 200
 LISTINGS_CACHE_TTL_SECONDS = 21600
+TWO_FA_CODE_TTL_SECONDS = 600
+TWO_FA_MAX_ATTEMPTS = 5
+TWO_FA_FORCE_EMAIL = os.getenv("TWO_FA_FORCE_EMAIL", "1") == "1"
+TWO_FA_DEV_SHOW_CODE = os.getenv("TWO_FA_DEV_SHOW_CODE", "1") == "1"
 
 ANALYSIS_CACHE: dict[tuple[str, str, int, str], tuple[float, "AnalysisResult"]] = {}
 SEARCH_CACHE: dict[str, tuple[float, str]] = {}
@@ -477,6 +483,20 @@ def init_db():
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS login_otp (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                code_hash TEXT NOT NULL,
+                expires_ts REAL NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                consumed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_login_otp_user_created
+                ON login_otp(user_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -494,6 +514,15 @@ def init_db():
             """
         )
 
+        user_columns = {
+            str(row["name"]).lower()
+            for row in conn.execute("PRAGMA table_info(users)").fetchall()
+            if row["name"]
+        }
+        if "email" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        conn.commit()
+
 
 def _get_current_user() -> Optional[dict[str, str | int]]:
     user_id = session.get("user_id")
@@ -505,6 +534,133 @@ def _get_current_user() -> Optional[dict[str, str | int]]:
         session.clear()
         return None
     return {"id": int(row["id"]), "username": str(row["username"])}
+
+
+def _mask_email(email: str) -> str:
+    local, _, domain = email.partition("@")
+    if not local or not domain:
+        return email
+    prefix = local[:2] if len(local) > 2 else local[:1]
+    return f"{prefix}{'*' * max(1, len(local) - len(prefix))}@{domain}"
+
+
+def _otp_hash(code: str) -> str:
+    secret = str(app.config.get("SECRET_KEY", "")).encode("utf-8")
+    return hmac.new(secret, code.encode("utf-8"), "sha256").hexdigest()
+
+
+def _clear_pending_2fa():
+    for key in (
+        "pending_2fa_user_id",
+        "pending_2fa_next",
+        "pending_2fa_email",
+        "pending_2fa_created_at",
+        "pending_2fa_username",
+        "pending_2fa_dev_code",
+    ):
+        session.pop(key, None)
+
+
+def _send_2fa_email(email: str, code: str) -> bool:
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user or "noreply@localhost")
+    use_tls = os.getenv("SMTP_STARTTLS", "1") == "1"
+
+    if not smtp_host:
+        app.logger.warning("2FA email not sent: SMTP_HOST is not configured.")
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = "Your security code"
+    msg["From"] = smtp_from
+    msg["To"] = email
+    msg.set_content(
+        f"Your verification code is: {code}\n"
+        f"It expires in {TWO_FA_CODE_TTL_SECONDS // 60} minutes.\n"
+        "If this was not you, change your password immediately."
+    )
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if smtp_user:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        return True
+    except Exception:
+        app.logger.exception("Failed to send 2FA email to %s", email)
+        return False
+
+
+def _issue_login_otp(user_id: int) -> str:
+    code = f"{random.randint(0, 999999):06d}"
+    code_hash = _otp_hash(code)
+    expires_ts = time.time() + TWO_FA_CODE_TTL_SECONDS
+    now_ts = time.time()
+
+    with _db_connect() as conn:
+        conn.execute("DELETE FROM login_otp WHERE user_id = ?", (user_id,))
+        conn.execute(
+            """
+            INSERT INTO login_otp(user_id, code_hash, expires_ts, attempts, consumed_at)
+            VALUES(?, ?, ?, 0, NULL)
+            """,
+            (user_id, code_hash, expires_ts),
+        )
+        conn.execute(
+            "DELETE FROM login_otp WHERE expires_ts < ? OR consumed_at IS NOT NULL",
+            (now_ts - 300,),
+        )
+        conn.commit()
+    return code
+
+
+def _verify_login_otp(user_id: int, code: str) -> tuple[bool, str]:
+    now_ts = time.time()
+    with _db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, code_hash, expires_ts, attempts
+            FROM login_otp
+            WHERE user_id = ? AND consumed_at IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        if not row:
+            return False, "Verification session expired. Please login again."
+
+        otp_id = int(row["id"])
+        attempts = int(row["attempts"])
+        expires_ts = float(row["expires_ts"])
+        stored_hash = str(row["code_hash"])
+
+        if now_ts > expires_ts:
+            conn.execute("DELETE FROM login_otp WHERE id = ?", (otp_id,))
+            conn.commit()
+            return False, "Code expired. Please login again."
+
+        if attempts >= TWO_FA_MAX_ATTEMPTS:
+            conn.execute("DELETE FROM login_otp WHERE id = ?", (otp_id,))
+            conn.commit()
+            return False, "Too many invalid attempts. Please login again."
+
+        if not hmac.compare_digest(_otp_hash(code), stored_hash):
+            conn.execute("UPDATE login_otp SET attempts = attempts + 1 WHERE id = ?", (otp_id,))
+            conn.commit()
+            return False, "Invalid code."
+
+        conn.execute(
+            "UPDATE login_otp SET consumed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (otp_id,),
+        )
+        conn.commit()
+    return True, ""
 
 
 def _watchlist_symbols(user_id: int) -> list[str]:
@@ -2003,14 +2159,22 @@ init_db()
 def register():
     error: Optional[str] = None
     username = ""
+    email = ""
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
 
         if len(username) < 3:
             error = "Username must have at least 3 characters."
+        elif TWO_FA_FORCE_EMAIL and (
+            not email
+            or len(email) > 254
+            or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)
+        ):
+            error = "Please provide a valid email for 2FA."
         elif len(password) < 6:
             error = "Password must have at least 6 characters."
         elif password != confirm:
@@ -2019,8 +2183,8 @@ def register():
             try:
                 with _db_connect() as conn:
                     conn.execute(
-                        "INSERT INTO users(username, password_hash) VALUES(?, ?)",
-                        (username, generate_password_hash(password)),
+                        "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                        (username, email, generate_password_hash(password)),
                     )
                     conn.commit()
                     row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
@@ -2029,7 +2193,7 @@ def register():
             except sqlite3.IntegrityError:
                 error = "Username already exists."
 
-    return render_template("register.html", error=error, username=username)
+    return render_template("register.html", error=error, username=username, email=email)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -2045,21 +2209,77 @@ def login():
 
         with _db_connect() as conn:
             row = conn.execute(
-                "SELECT id, password_hash FROM users WHERE username = ?",
+                "SELECT id, email, password_hash FROM users WHERE username = ?",
                 (username,),
             ).fetchone()
 
         if not row or not check_password_hash(str(row["password_hash"]), password):
             error = "Invalid username or password."
         else:
-            session["user_id"] = int(row["id"])
-            return redirect(next_url)
+            user_id = int(row["id"])
+            email = str(row["email"] or "").strip()
+            if not email and TWO_FA_FORCE_EMAIL:
+                error = "Your account has no email for 2FA. Create a new account with email."
+            else:
+                code = _issue_login_otp(user_id)
+                sent = _send_2fa_email(email, code) if email else False
+
+                _clear_pending_2fa()
+                session["pending_2fa_user_id"] = user_id
+                session["pending_2fa_next"] = next_url
+                session["pending_2fa_email"] = _mask_email(email) if email else "N/A"
+                session["pending_2fa_username"] = username
+                session["pending_2fa_created_at"] = int(time.time())
+
+                if (not sent) and app.config.get("DEBUG") and TWO_FA_DEV_SHOW_CODE:
+                    session["pending_2fa_dev_code"] = code
+
+                return redirect(url_for("login_verify"))
 
     return render_template("login.html", error=error, username=username)
 
 
+@app.route("/login/verify", methods=["GET", "POST"])
+def login_verify():
+    pending_user_id = session.get("pending_2fa_user_id")
+    if not pending_user_id:
+        return redirect(url_for("login"))
+
+    error: Optional[str] = None
+    created_at = int(session.get("pending_2fa_created_at", 0))
+    if created_at and time.time() - created_at > TWO_FA_CODE_TTL_SECONDS:
+        _clear_pending_2fa()
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        if not _rate_limit(scope="2fa", limit=20, window_seconds=60):
+            error = "Too many attempts. Wait a minute and try again."
+        else:
+            code = re.sub(r"\D", "", request.form.get("code", ""))
+            if len(code) != 6:
+                error = "Enter the 6-digit code."
+            else:
+                ok, message = _verify_login_otp(int(pending_user_id), code)
+                if not ok:
+                    error = message
+                else:
+                    next_url = str(session.get("pending_2fa_next") or url_for("index"))
+                    session["user_id"] = int(pending_user_id)
+                    _clear_pending_2fa()
+                    return redirect(next_url if _is_safe_next_url(next_url) else url_for("index"))
+
+    return render_template(
+        "login_verify.html",
+        error=error,
+        username=session.get("pending_2fa_username", ""),
+        masked_email=session.get("pending_2fa_email", ""),
+        dev_code=session.get("pending_2fa_dev_code"),
+    )
+
+
 @app.post("/logout")
 def logout():
+    _clear_pending_2fa()
     session.clear()
     return redirect(url_for("index"))
 

@@ -40,6 +40,11 @@ class RouteTests(unittest.TestCase):
     def setUp(self):
         app.app.config["TESTING"] = True
         self.client = app.app.test_client()
+        with app._db_connect() as conn:
+            conn.execute("DELETE FROM login_otp")
+            conn.execute("DELETE FROM watchlist")
+            conn.execute("DELETE FROM users")
+            conn.commit()
 
     def test_post_empty_input_returns_validation_error(self):
         response = self.client.post("/", data={"ticker": "", "period": "2y"})
@@ -145,6 +150,51 @@ class RouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["status"], "ok")
+
+    @patch("app._send_2fa_email", return_value=True)
+    @patch("app.random.randint", return_value=123456)
+    def test_login_redirects_to_2fa_verify(self, _rand_mock: Mock, _send_mock: Mock):
+        with app._db_connect() as conn:
+            conn.execute(
+                "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                ("alice", "alice@example.com", app.generate_password_hash("secret123")),
+            )
+            conn.commit()
+
+        response = self.client.post(
+            "/login",
+            data={"username": "alice", "password": "secret123"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login/verify", response.headers.get("Location", ""))
+
+    @patch("app._send_2fa_email", return_value=True)
+    @patch("app.random.randint", return_value=123456)
+    def test_login_2fa_verify_sets_user_session(self, _rand_mock: Mock, _send_mock: Mock):
+        with app._db_connect() as conn:
+            conn.execute(
+                "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                ("alice", "alice@example.com", app.generate_password_hash("secret123")),
+            )
+            conn.commit()
+
+        step1 = self.client.post(
+            "/login",
+            data={"username": "alice", "password": "secret123"},
+            follow_redirects=False,
+        )
+        self.assertEqual(step1.status_code, 302)
+        self.assertIn("/login/verify", step1.headers.get("Location", ""))
+
+        step2 = self.client.post(
+            "/login/verify",
+            data={"code": "123456"},
+            follow_redirects=False,
+        )
+        self.assertEqual(step2.status_code, 302)
+        self.assertEqual(step2.headers.get("Location"), "/")
 
     def test_crypto_get_renders_page(self):
         response = self.client.get("/crypto")

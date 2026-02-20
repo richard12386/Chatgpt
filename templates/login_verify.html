@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Login</title>
+  <title>2FA Verification</title>
   <style>
     body {
       margin: 0;
@@ -25,6 +25,7 @@
       box-shadow: 0 12px 28px rgba(22, 32, 41, 0.08);
     }
     h1 { margin-top: 0; }
+    p { color: #5f6b76; }
     label {
       display: block;
       margin: 0.6rem 0 0.25rem;
@@ -37,8 +38,10 @@
       border: 1px solid #d9dee4;
       background: #fff;
       padding: 0.7rem 0.8rem;
-      font-size: 0.95rem;
+      font-size: 1.1rem;
       color: #162029;
+      letter-spacing: 0.14em;
+      text-align: center;
     }
     button {
       margin-top: 0.9rem;
@@ -58,6 +61,15 @@
       border-radius: 10px;
       padding: 0.6rem 0.75rem;
     }
+    .note {
+      margin-top: 0.7rem;
+      color: #0c4a6e;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      padding: 0.6rem 0.75rem;
+      font-weight: 700;
+    }
     .links {
       margin-top: 0.9rem;
       display: flex;
@@ -74,22 +86,21 @@
 <body>
   <main class="page">
     <section class="card">
-      <h1>Login</h1>
-      <p>After password check, we send a 6-digit verification code.</p>
+      <h1>2FA Verification</h1>
+      <p>User: <strong>{{ username }}</strong></p>
+      <p>Code sent to: <strong>{{ masked_email }}</strong></p>
       <form method="post">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <label for="username">Username</label>
-        <input id="username" name="username" type="text" value="{{ username }}" required>
-
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" required>
-
-        <button type="submit">Login</button>
+        <label for="code">6-digit code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required>
+        <button type="submit">Verify</button>
       </form>
       {% if error %}<div class="error">{{ error }}</div>{% endif %}
+      {% if dev_code %}
+      <div class="note">Dev code: {{ dev_code }}</div>
+      {% endif %}
       <div class="links">
-        <a href="/">Back to Home</a>
-        <a href="/register">Create Account</a>
+        <a href="/login">Back to Login</a>
       </div>
     </section>
   </main>
