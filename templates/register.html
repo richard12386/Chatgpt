@@ -8,7 +8,7 @@
     body {
       margin: 0;
       font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
-      background: #eef0f2;
+      background: #e3e5e8;
       color: #162029;
       min-height: 100vh;
     }
@@ -80,8 +80,8 @@
         <label for="username">Username</label>
         <input id="username" name="username" type="text" value="{{ username }}" required>
 
-        <label for="email">Email (for 2FA)</label>
-        <input id="email" name="email" type="email" value="{{ email }}" required>
+        <label for="email">Email (optional)</label>
+        <input id="email" name="email" type="email" value="{{ email }}">
 
         <label for="password">Password</label>
         <input id="password" name="password" type="password" required>
@@ -100,3 +100,4 @@
   </main>
 </body>
 </html>
+
