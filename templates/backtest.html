@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backtest</title>
+  <style>
+    body {
+      margin: 0;
+      color: #162029;
+      font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+      background: #e3e5e8;
+      min-height: 100vh;
+    }
+    .page { max-width: 1080px; margin: 0 auto; padding: 1.4rem 1rem 2rem; }
+    .topnav {
+      margin-bottom: 0.8rem;
+      border-bottom: 2px solid #0f766e;
+      padding-bottom: 0.35rem;
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .topnav a {
+      border: 1px solid #dbe2ea;
+      color: #334155;
+      background: #f8fafc;
+      text-decoration: none;
+      font-weight: 800;
+      padding: 0.44rem 0.7rem;
+      border-radius: 8px;
+      display: inline-block;
+    }
+    .topnav a.active {
+      background: #dbeafe;
+      color: #1e3a8a;
+      border-color: #93c5fd;
+    }
+    .panel {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid #d9dee4;
+      border-radius: 16px;
+      box-shadow: 0 12px 28px rgba(22, 32, 41, 0.08);
+      padding: 1rem;
+    }
+    form {
+      margin-top: 0.8rem;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+      gap: 0.55rem;
+      align-items: end;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.2rem;
+      font-size: 0.88rem;
+      color: #5f6b76;
+      font-weight: 700;
+    }
+    input, select {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid #d9dee4;
+      background: #fff;
+      padding: 0.62rem 0.7rem;
+      font-size: 0.95rem;
+      color: #162029;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #005f73, #0a9396);
+      color: #fff;
+      font-weight: 700;
+      padding: 0.64rem 0.9rem;
+      cursor: pointer;
+    }
+    .error {
+      margin-top: 0.7rem;
+      color: #b42318;
+      background: #fef3f2;
+      border: 1px solid #fecdca;
+      border-radius: 10px;
+      padding: 0.6rem 0.75rem;
+    }
+    .results { margin-top: 0.9rem; display: grid; gap: 0.8rem; }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.6rem;
+    }
+    .stat {
+      background: #fff;
+      border: 1px solid #d9dee4;
+      border-radius: 10px;
+      padding: 0.6rem;
+    }
+    .k { display: block; font-size: 0.75rem; color: #64748b; font-weight: 700; text-transform: uppercase; }
+    .v { font-size: 1rem; font-weight: 800; }
+    .chart-wrap {
+      height: 360px;
+      background: #fff;
+      border: 1px solid #d9dee4;
+      border-radius: 12px;
+      padding: 0.6rem;
+    }
+    @media (max-width: 960px) {
+      form { grid-template-columns: 1fr 1fr; }
+      .stat-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .stat-grid { grid-template-columns: 1fr; }
+      .chart-wrap { height: 280px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <nav class="topnav" aria-label="Primary">
+      <a href="/">Stocks</a>
+      <a href="/crypto">Crypto</a>
+      <a href="/markets">Markets</a>
+      <a class="active" href="/backtest">Backtest</a>
+    </nav>
+
+    <section class="panel">
+      <h1>Strategy Backtest (SMA Crossover)</h1>
+      <p>Simple backtest: in market when Fast SMA is above Slow SMA.</p>
+      <form method="post">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div>
+          <label for="ticker">Ticker</label>
+          <input id="ticker" type="text" name="ticker" value="{{ input_value }}" placeholder="e.g. AAPL" required>
+        </div>
+        <div>
+          <label for="period">Range</label>
+          <select id="period" name="period">
+            {% for value, label in period_options %}
+              <option value="{{ value }}" {% if value == selected_period %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="fast_window">Fast SMA</label>
+          <input id="fast_window" type="number" name="fast_window" min="2" max="200" value="{{ fast_window }}">
+        </div>
+        <div>
+          <label for="slow_window">Slow SMA</label>
+          <input id="slow_window" type="number" name="slow_window" min="3" max="300" value="{{ slow_window }}">
+        </div>
+        <div>
+          <label for="initial_capital">Start Capital</label>
+          <input id="initial_capital" type="number" step="0.01" name="initial_capital" value="{{ initial_capital }}">
+        </div>
+        <button type="submit">Run Backtest</button>
+      </form>
+      {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    </section>
+
+    {% if result %}
+    <section class="results">
+      <article class="panel">
+        <h2>{{ result.symbol }} | {{ result.period }} | {{ result.fast_window }}/{{ result.slow_window }} SMA</h2>
+        <div class="stat-grid">
+          <div class="stat"><span class="k">Final Equity</span><span class="v">{{ "%.2f"|format(result.final_equity) }}</span></div>
+          <div class="stat"><span class="k">Buy & Hold</span><span class="v">{{ "%.2f"|format(result.buy_hold_final) }}</span></div>
+          <div class="stat"><span class="k">Strategy Return</span><span class="v">{{ "%.2f"|format(result.total_return_pct) }}%</span></div>
+          <div class="stat"><span class="k">Buy & Hold Return</span><span class="v">{{ "%.2f"|format(result.buy_hold_return_pct) }}%</span></div>
+          <div class="stat"><span class="k">Max Drawdown</span><span class="v">{{ "%.2f"|format(result.max_drawdown_pct) }}%</span></div>
+          <div class="stat"><span class="k">Entries</span><span class="v">{{ result.trade_entries }}</span></div>
+          <div class="stat"><span class="k">Exits</span><span class="v">{{ result.trade_exits }}</span></div>
+          <div class="stat"><span class="k">Initial Capital</span><span class="v">{{ "%.2f"|format(result.initial_capital) }}</span></div>
+        </div>
+      </article>
+      <article class="panel">
+        <div class="chart-wrap">
+          <canvas id="backtestChart"></canvas>
+        </div>
+      </article>
+    </section>
+    {% endif %}
+  </main>
+
+  {% if result %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const points = {{ result.points|tojson }};
+    const labels = points.map((p) => p.date);
+    const equity = points.map((p) => p.equity);
+    const buyHold = points.map((p) => p.buy_hold);
+    const ctx = document.getElementById("backtestChart").getContext("2d");
+    new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          { label: "Strategy Equity", data: equity, borderColor: "#0284c7", borderWidth: 1.6, pointRadius: 0, tension: 0.15 },
+          { label: "Buy & Hold", data: buyHold, borderColor: "#16a34a", borderWidth: 1.2, pointRadius: 0, tension: 0.15 },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: { beginAtZero: false },
+        },
+      },
+    });
+  </script>
+  {% endif %}
+</body>
+</html>

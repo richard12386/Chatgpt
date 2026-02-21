@@ -211,6 +211,23 @@ class CryptoChartResult:
     as_of: str
 
 
+@dataclass
+class BacktestResult:
+    symbol: str
+    period: str
+    fast_window: int
+    slow_window: int
+    initial_capital: float
+    final_equity: float
+    buy_hold_final: float
+    total_return_pct: float
+    buy_hold_return_pct: float
+    max_drawdown_pct: float
+    trade_entries: int
+    trade_exits: int
+    points: list[dict[str, float | str]]
+
+
 CRYPTO_RANGE_OPTIONS = [
     ("24h", "24h"),
     ("1w", "1W"),
@@ -2091,6 +2108,97 @@ def _clear_search_history():
     RECENT_SEARCHES.clear()
 
 
+def _normalize_backtest_window(value: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _normalize_backtest_capital(value: str, default: float = 10000.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return min(parsed, 10_000_000.0)
+
+
+def get_backtest_result(
+    input_value: str,
+    period: str = "1y",
+    fast_window: int = 20,
+    slow_window: int = 50,
+    initial_capital: float = 10_000.0,
+) -> BacktestResult:
+    if fast_window >= slow_window:
+        raise ValueError("Fast SMA must be lower than Slow SMA.")
+
+    symbol = _resolve_input_symbol(input_value)
+    ticker = yf.Ticker(symbol)
+    history = _history_with_retry(ticker, period=period, interval="1d")
+    if history.empty or "Close" not in history.columns:
+        raise ValueError("No price data found for backtest.")
+
+    close = history["Close"].dropna()
+    required_points = max(slow_window + 5, 60)
+    if len(close) < required_points:
+        raise ValueError("Not enough historical data for selected SMA windows.")
+
+    sma_fast = close.rolling(fast_window).mean()
+    sma_slow = close.rolling(slow_window).mean()
+
+    signal = (sma_fast > sma_slow).astype(int)
+    signal_shifted = signal.shift(1).fillna(0)
+    daily_returns = close.pct_change().fillna(0.0)
+    strategy_returns = daily_returns * signal_shifted
+
+    equity_curve = initial_capital * (1.0 + strategy_returns).cumprod()
+    buy_hold_curve = initial_capital * (close / float(close.iloc[0]))
+
+    final_equity = float(equity_curve.iloc[-1])
+    buy_hold_final = float(buy_hold_curve.iloc[-1])
+    total_return_pct = (final_equity / initial_capital - 1.0) * 100.0
+    buy_hold_return_pct = (buy_hold_final / initial_capital - 1.0) * 100.0
+
+    running_peak = equity_curve.cummax()
+    drawdown = (equity_curve / running_peak - 1.0) * 100.0
+    max_drawdown_pct = float(drawdown.min()) if not drawdown.empty else 0.0
+
+    position_changes = signal.diff().fillna(0)
+    trade_entries = int((position_changes > 0).sum())
+    trade_exits = int((position_changes < 0).sum())
+
+    points: list[dict[str, float | str]] = []
+    for dt, eq in equity_curve.items():
+        date_str = dt.strftime("%Y-%m-%d")
+        points.append(
+            {
+                "date": date_str,
+                "equity": float(eq),
+                "buy_hold": float(buy_hold_curve.loc[dt]),
+            }
+        )
+
+    return BacktestResult(
+        symbol=symbol,
+        period=period,
+        fast_window=fast_window,
+        slow_window=slow_window,
+        initial_capital=initial_capital,
+        final_equity=final_equity,
+        buy_hold_final=buy_hold_final,
+        total_return_pct=total_return_pct,
+        buy_hold_return_pct=buy_hold_return_pct,
+        max_drawdown_pct=max_drawdown_pct,
+        trade_entries=trade_entries,
+        trade_exits=trade_exits,
+        points=points,
+    )
+
+
 def _latest_cached_result() -> Optional["AnalysisResult"]:
     if not ANALYSIS_CACHE:
         return None
@@ -2747,6 +2855,55 @@ def alerts_remove():
     except Exception:
         pass
     return redirect(request.referrer or url_for("alerts"))
+
+
+@app.route("/backtest", methods=["GET", "POST"])
+def backtest():
+    input_value = ""
+    selected_period = "1y"
+    fast_window = 20
+    slow_window = 50
+    initial_capital = 10000.0
+    result: Optional[BacktestResult] = None
+    error: Optional[str] = None
+    current_user = _get_current_user()
+
+    if request.method == "POST":
+        input_value = request.form.get("ticker", "").strip()
+        selected_period = _normalize_period(request.form.get("period", "1y"))
+        fast_window = _normalize_backtest_window(request.form.get("fast_window", "20"), 20, 2, 200)
+        slow_window = _normalize_backtest_window(request.form.get("slow_window", "50"), 50, 3, 300)
+        initial_capital = _normalize_backtest_capital(request.form.get("initial_capital", "10000"))
+
+        if not input_value:
+            error = "Please enter a ticker symbol or company name."
+        else:
+            try:
+                result = get_backtest_result(
+                    input_value=input_value,
+                    period=selected_period,
+                    fast_window=fast_window,
+                    slow_window=slow_window,
+                    initial_capital=initial_capital,
+                )
+            except ValueError as exc:
+                error = str(exc)
+            except Exception:
+                app.logger.exception("Backtest failed for input: %s", input_value)
+                error = "Could not run backtest right now. Please try again."
+
+    return render_template(
+        "backtest.html",
+        current_user=current_user,
+        input_value=input_value,
+        selected_period=selected_period,
+        period_options=PERIOD_OPTIONS,
+        fast_window=fast_window,
+        slow_window=slow_window,
+        initial_capital=initial_capital,
+        result=result,
+        error=error,
+    )
 
 
 @app.route("/", methods=["GET", "POST"])
