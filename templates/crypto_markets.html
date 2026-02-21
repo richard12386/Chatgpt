@@ -73,6 +73,15 @@
       font-weight: 800;
       cursor: pointer;
     }
+    .delete-btn {
+      border: 1px solid #fecaca;
+      color: #fff;
+      background: #b42318;
+      border-radius: 8px;
+      padding: 0.42rem 0.65rem;
+      font-weight: 800;
+      cursor: pointer;
+    }
     .back {
       display: inline-block;
       text-decoration: none;
@@ -163,6 +172,10 @@
         <form class="inline-form" method="post" action="/logout">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <button class="logout-btn" type="submit">Logout</button>
+        </form>
+        <form class="inline-form" method="post" action="/account/delete" onsubmit="return confirm('Are you 100% sure you want to permanently delete your account? This cannot be undone.');">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <button class="delete-btn" type="submit">Delete Account</button>
         </form>
       {% else %}
         <div class="spacer"></div>

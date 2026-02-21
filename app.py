@@ -2813,6 +2813,28 @@ def logout():
     return redirect(url_for("index"))
 
 
+@app.post("/account/delete")
+@_login_required
+def account_delete():
+    user = _get_current_user()
+    if not user:
+        return redirect(url_for("login"))
+
+    user_id = int(user["id"])
+    with _db_connect() as conn:
+        conn.execute("DELETE FROM login_otp WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM registration_otp WHERE username = ?", (str(user["username"]),))
+        conn.execute("DELETE FROM watchlist WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM price_alerts WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+
+    _clear_pending_2fa()
+    _clear_pending_registration()
+    session.clear()
+    return redirect(url_for("index"))
+
+
 @app.post("/recent/clear")
 def recent_clear():
     _clear_search_history()

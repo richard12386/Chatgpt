@@ -65,6 +65,11 @@
     }
     tr:last-child td { border-bottom: 0; }
     .inline-form { margin: 0; display: inline; }
+    .danger-btn {
+      background: #b42318 !important;
+      border-color: #fecaca !important;
+      color: #fff !important;
+    }
     .empty { color: #5f6b76; }
   </style>
 </head>
@@ -79,6 +84,10 @@
       <form class="inline-form" method="post" action="/logout">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <button type="submit">Logout</button>
+      </form>
+      <form class="inline-form" method="post" action="/account/delete" onsubmit="return confirm('Are you 100% sure you want to permanently delete your account? This cannot be undone.');">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button class="danger-btn" type="submit">Delete Account</button>
       </form>
     </nav>
 
