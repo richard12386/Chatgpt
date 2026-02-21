@@ -163,9 +163,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
         self.assertIsNotNone(response.headers.get("Content-Security-Policy"))
 
-    @patch("app._send_register_email", return_value=True)
-    @patch("app.random.randint", return_value=654321)
-    def test_register_redirects_to_email_verify(self, _rand_mock: Mock, _send_mock: Mock):
+    def test_register_creates_user_and_redirects_home(self):
         response = self.client.post(
             "/register",
             data={
@@ -177,36 +175,14 @@ class RouteTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/register/verify", response.headers.get("Location", ""))
-
-    @patch("app._send_register_email", return_value=True)
-    @patch("app.random.randint", return_value=654321)
-    def test_register_verify_creates_user(self, _rand_mock: Mock, _send_mock: Mock):
-        step1 = self.client.post(
-            "/register",
-            data={
-                "username": "newuser",
-                "email": "newuser@example.com",
-                "password": "secret123",
-                "confirm_password": "secret123",
-            },
-            follow_redirects=False,
-        )
-        self.assertEqual(step1.status_code, 302)
-        self.assertIn("/register/verify", step1.headers.get("Location", ""))
-
-        step2 = self.client.post("/register/verify", data={"code": "654321"}, follow_redirects=False)
-        self.assertEqual(step2.status_code, 302)
-        self.assertEqual(step2.headers.get("Location"), "/")
+        self.assertEqual(response.headers.get("Location"), "/")
 
         with app._db_connect() as conn:
             row = conn.execute("SELECT id FROM users WHERE username = ?", ("newuser",)).fetchone()
         self.assertIsNotNone(row)
 
-    @patch("app._send_register_email", return_value=True)
-    @patch("app.random.randint", return_value=654321)
-    def test_register_verify_invalid_code_shows_error(self, _rand_mock: Mock, _send_mock: Mock):
-        self.client.post(
+    def test_register_verify_redirects_to_register_when_2fa_disabled(self):
+        response = self.client.post(
             "/register",
             data={
                 "username": "newuser",
@@ -216,10 +192,10 @@ class RouteTests(unittest.TestCase):
             },
             follow_redirects=False,
         )
-        bad = self.client.post("/register/verify", data={"code": "111111"})
-        body = bad.get_data(as_text=True)
-        self.assertEqual(bad.status_code, 200)
-        self.assertIn("Invalid code.", body)
+        self.assertEqual(response.status_code, 302)
+        bad = self.client.get("/register/verify", follow_redirects=False)
+        self.assertEqual(bad.status_code, 302)
+        self.assertEqual(bad.headers.get("Location"), "/register")
 
     def test_alerts_requires_login(self):
         response = self.client.get("/alerts", follow_redirects=False)
@@ -292,9 +268,7 @@ class RouteTests(unittest.TestCase):
             row = conn.execute("SELECT id FROM price_alerts WHERE id = ?", (alert_id,)).fetchone()
         self.assertIsNone(row)
 
-    @patch("app._send_2fa_email", return_value=True)
-    @patch("app.random.randint", return_value=123456)
-    def test_login_redirects_to_2fa_verify(self, _rand_mock: Mock, _send_mock: Mock):
+    def test_login_redirects_home_when_credentials_ok(self):
         with app._db_connect() as conn:
             conn.execute(
                 "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
@@ -309,11 +283,9 @@ class RouteTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/login/verify", response.headers.get("Location", ""))
+        self.assertEqual(response.headers.get("Location"), "/")
 
-    @patch("app._send_2fa_email", return_value=True)
-    @patch("app.random.randint", return_value=123456)
-    def test_login_2fa_verify_sets_user_session(self, _rand_mock: Mock, _send_mock: Mock):
+    def test_login_sets_authenticated_session(self):
         with app._db_connect() as conn:
             conn.execute(
                 "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
@@ -327,31 +299,10 @@ class RouteTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(step1.status_code, 302)
-        self.assertIn("/login/verify", step1.headers.get("Location", ""))
-
-        step2 = self.client.post(
-            "/login/verify",
-            data={"code": "123456"},
-            follow_redirects=False,
-        )
-        self.assertEqual(step2.status_code, 302)
-        self.assertEqual(step2.headers.get("Location"), "/")
-
-    @patch("app._send_2fa_email", return_value=True)
-    @patch("app.random.randint", return_value=123456)
-    def test_login_2fa_verify_invalid_code(self, _rand_mock: Mock, _send_mock: Mock):
-        with app._db_connect() as conn:
-            conn.execute(
-                "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
-                ("alice", "alice@example.com", app.generate_password_hash("secret123")),
-            )
-            conn.commit()
-
-        self.client.post("/login", data={"username": "alice", "password": "secret123"})
-        bad = self.client.post("/login/verify", data={"code": "000000"})
-        body = bad.get_data(as_text=True)
-        self.assertEqual(bad.status_code, 200)
-        self.assertIn("Invalid code.", body)
+        self.assertEqual(step1.headers.get("Location"), "/")
+        with self.client.session_transaction() as sess:
+            self.assertIn("user_id", sess)
+            self.assertIn("auth_boot_token", sess)
 
     def test_login_verify_without_pending_redirects_to_login(self):
         response = self.client.get("/login/verify", follow_redirects=False)
