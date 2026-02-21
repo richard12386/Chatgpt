@@ -379,6 +379,47 @@ class RouteTests(unittest.TestCase):
         self.assertIn("AAPL | 1y | 20/50 SMA", body)
         self.assertIn("Strategy Equity", body)
 
+    def test_crypto_backtest_get_page(self):
+        response = self.client.get("/crypto/backtest")
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Crypto Strategy Backtest", body)
+
+    @patch("app.get_crypto_backtest_result")
+    def test_crypto_backtest_post_renders_result(self, backtest_mock: Mock):
+        backtest_mock.return_value = app.BacktestResult(
+            symbol="BTC",
+            period="1y",
+            fast_window=20,
+            slow_window=50,
+            initial_capital=10000.0,
+            final_equity=13321.0,
+            buy_hold_final=12880.0,
+            total_return_pct=33.21,
+            buy_hold_return_pct=28.8,
+            max_drawdown_pct=-12.2,
+            trade_entries=6,
+            trade_exits=6,
+            points=[
+                {"date": "2026-01-01", "equity": 10000.0, "buy_hold": 10000.0},
+                {"date": "2026-02-01", "equity": 13321.0, "buy_hold": 12880.0},
+            ],
+        )
+        response = self.client.post(
+            "/crypto/backtest",
+            data={
+                "symbol": "BTC",
+                "period": "1y",
+                "fast_window": "20",
+                "slow_window": "50",
+                "initial_capital": "10000",
+            },
+        )
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("BTC | 1y | 20/50 SMA", body)
+        self.assertIn("Strategy Equity", body)
+
     @patch("app.get_crypto_price_summary")
     @patch("app._fetch_crypto_chart_yahoo")
     @patch("app._resolve_crypto_input")

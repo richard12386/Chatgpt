@@ -2133,16 +2133,48 @@ def get_backtest_result(
     slow_window: int = 50,
     initial_capital: float = 10_000.0,
 ) -> BacktestResult:
-    if fast_window >= slow_window:
-        raise ValueError("Fast SMA must be lower than Slow SMA.")
-
     symbol = _resolve_input_symbol(input_value)
     ticker = yf.Ticker(symbol)
     history = _history_with_retry(ticker, period=period, interval="1d")
     if history.empty or "Close" not in history.columns:
         raise ValueError("No price data found for backtest.")
-
     close = history["Close"].dropna()
+    return _build_backtest_from_close(symbol, period, close, fast_window, slow_window, initial_capital)
+
+
+def get_crypto_backtest_result(
+    input_value: str,
+    period: str = "1y",
+    fast_window: int = 20,
+    slow_window: int = 50,
+    initial_capital: float = 10_000.0,
+) -> BacktestResult:
+    base_symbol, _coin_name = _resolve_crypto_input(input_value)
+    ticker = yf.Ticker(f"{base_symbol}-USD")
+    history = _history_with_retry(ticker, period=period, interval="1d")
+    if history.empty or "Close" not in history.columns:
+        raise ValueError("No price data found for crypto backtest.")
+    close = history["Close"].dropna()
+    return _build_backtest_from_close(
+        base_symbol,
+        period,
+        close,
+        fast_window,
+        slow_window,
+        initial_capital,
+    )
+
+
+def _build_backtest_from_close(
+    symbol: str,
+    period: str,
+    close,
+    fast_window: int,
+    slow_window: int,
+    initial_capital: float,
+) -> BacktestResult:
+    if fast_window >= slow_window:
+        raise ValueError("Fast SMA must be lower than Slow SMA.")
     required_points = max(slow_window + 5, 60)
     if len(close) < required_points:
         raise ValueError("Not enough historical data for selected SMA windows.")
@@ -2894,6 +2926,55 @@ def backtest():
 
     return render_template(
         "backtest.html",
+        current_user=current_user,
+        input_value=input_value,
+        selected_period=selected_period,
+        period_options=PERIOD_OPTIONS,
+        fast_window=fast_window,
+        slow_window=slow_window,
+        initial_capital=initial_capital,
+        result=result,
+        error=error,
+    )
+
+
+@app.route("/crypto/backtest", methods=["GET", "POST"])
+def crypto_backtest():
+    input_value = ""
+    selected_period = "1y"
+    fast_window = 20
+    slow_window = 50
+    initial_capital = 10000.0
+    result: Optional[BacktestResult] = None
+    error: Optional[str] = None
+    current_user = _get_current_user()
+
+    if request.method == "POST":
+        input_value = request.form.get("symbol", "").strip()
+        selected_period = _normalize_period(request.form.get("period", "1y"))
+        fast_window = _normalize_backtest_window(request.form.get("fast_window", "20"), 20, 2, 200)
+        slow_window = _normalize_backtest_window(request.form.get("slow_window", "50"), 50, 3, 300)
+        initial_capital = _normalize_backtest_capital(request.form.get("initial_capital", "10000"))
+
+        if not input_value:
+            error = "Please enter a crypto symbol or coin name."
+        else:
+            try:
+                result = get_crypto_backtest_result(
+                    input_value=input_value,
+                    period=selected_period,
+                    fast_window=fast_window,
+                    slow_window=slow_window,
+                    initial_capital=initial_capital,
+                )
+            except ValueError as exc:
+                error = str(exc)
+            except Exception:
+                app.logger.exception("Crypto backtest failed for input: %s", input_value)
+                error = "Could not run crypto backtest right now. Please try again."
+
+    return render_template(
+        "crypto_backtest.html",
         current_user=current_user,
         input_value=input_value,
         selected_period=selected_period,

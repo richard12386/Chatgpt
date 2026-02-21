@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Backtest</title>
+  <title>Crypto Backtest</title>
   <style>
     body {
       margin: 0;
@@ -15,7 +15,7 @@
     .page { max-width: 1080px; margin: 0 auto; padding: 1.4rem 1rem 2rem; }
     .topnav {
       margin-bottom: 0.8rem;
-      border-bottom: 2px solid #0f766e;
+      border-bottom: 2px solid #0891b2;
       padding-bottom: 0.35rem;
       display: flex;
       gap: 0.45rem;
@@ -70,7 +70,7 @@
     button {
       border: 0;
       border-radius: 10px;
-      background: linear-gradient(135deg, #005f73, #0a9396);
+      background: linear-gradient(135deg, #0284c7, #0ea5e9);
       color: #fff;
       font-weight: 700;
       padding: 0.64rem 0.9rem;
@@ -126,18 +126,18 @@
     <nav class="topnav" aria-label="Primary">
       <a href="/">Stocks</a>
       <a href="/crypto">Crypto</a>
-      <a href="/markets">Markets</a>
-      <a class="active" href="/backtest">Backtest</a>
+      <a href="/crypto/markets">Crypto Markets</a>
+      <a class="active" href="/crypto/backtest">Crypto Backtest</a>
     </nav>
 
     <section class="panel">
-      <h1>Strategy Backtest (SMA Crossover)</h1>
+      <h1>Crypto Strategy Backtest (SMA Crossover)</h1>
       <p>Simple backtest: in market when Fast SMA is above Slow SMA.</p>
       <form method="post">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div>
-          <label for="ticker">Ticker</label>
-          <input id="ticker" type="text" name="ticker" value="{{ input_value }}" placeholder="e.g. AAPL" required>
+          <label for="symbol">Crypto Symbol/Name</label>
+          <input id="symbol" type="text" name="symbol" value="{{ input_value }}" placeholder="e.g. BTC or Bitcoin" required>
         </div>
         <div>
           <label for="period">Range</label>
@@ -181,7 +181,7 @@
       </article>
       <article class="panel">
         <div class="chart-wrap">
-          <canvas id="backtestChart"></canvas>
+          <canvas id="cryptoBacktestChart"></canvas>
         </div>
         <p id="hoverReadout" class="hover-readout">Move mouse over the chart to see live equity values.</p>
       </article>
@@ -220,7 +220,7 @@
     }
 
     const crosshairPlugin = {
-      id: "crosshairPluginBacktest",
+      id: "crosshairPluginCryptoBacktest",
       afterDatasetsDraw(chart) {
         if (!Number.isFinite(chart.$hoverX)) return;
         const { ctx, chartArea } = chart;
@@ -237,7 +237,7 @@
       },
     };
 
-    const ctx = document.getElementById("backtestChart").getContext("2d");
+    const ctx = document.getElementById("cryptoBacktestChart").getContext("2d");
     new Chart(ctx, {
       type: "line",
       data: {
@@ -270,7 +270,7 @@
       plugins: [crosshairPlugin],
     });
 
-    document.getElementById("backtestChart").addEventListener("mouseleave", () => {
+    document.getElementById("cryptoBacktestChart").addEventListener("mouseleave", () => {
       hoverReadout.textContent = "Move mouse over the chart to see live equity values.";
     });
   </script>
