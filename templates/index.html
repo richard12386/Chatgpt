@@ -478,8 +478,9 @@
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <button class="logout-btn" type="submit">Logout</button>
         </form>
-        <form class="inline-form" method="post" action="/account/delete" onsubmit="return confirm('Are you 100% sure you want to permanently delete your account? This cannot be undone.');">
+        <form class="inline-form" method="post" action="/account/delete" onsubmit="if(!confirm('Are you 100% sure you want to permanently delete your account? This cannot be undone.')) return false; const pwd = prompt('Enter your password to confirm account deletion:'); if(!pwd) return false; this.querySelector('input[name=confirm_password]').value = pwd; return true;">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="confirm_password" value="">
           <button class="delete-btn" type="submit">Delete Account</button>
         </form>
       {% else %}

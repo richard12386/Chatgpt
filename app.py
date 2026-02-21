@@ -3228,6 +3228,13 @@ def account_delete():
         return redirect(url_for("login"))
 
     user_id = int(user["id"])
+    confirm_password = request.form.get("confirm_password", "")
+
+    with _db_connect() as conn:
+        row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row or not check_password_hash(str(row["password_hash"]), confirm_password):
+        return ("Invalid password. Account was not deleted.", 400)
+
     with _db_connect() as conn:
         conn.execute("DELETE FROM login_otp WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM registration_otp WHERE username = ?", (str(user["username"]),))

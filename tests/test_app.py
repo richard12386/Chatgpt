@@ -560,6 +560,54 @@ class RouteTests(unittest.TestCase):
             self.assertNotIn("pending_2fa_user_id", sess)
             self.assertNotIn("pending_register_username", sess)
 
+    def test_account_delete_rejects_wrong_password(self):
+        with app._db_connect() as conn:
+            conn.execute(
+                "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                ("deluser", "del@example.com", app.generate_password_hash("goodpass123")),
+            )
+            conn.commit()
+            row = conn.execute("SELECT id FROM users WHERE username = ?", ("deluser",)).fetchone()
+            user_id = int(row["id"])
+
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = user_id
+            sess["auth_boot_token"] = app.APP_BOOT_TOKEN
+
+        response = self.client.post("/account/delete", data={"confirm_password": "badpass"}, follow_redirects=False)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid password", response.get_data(as_text=True))
+
+        with app._db_connect() as conn:
+            row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        self.assertIsNotNone(row)
+
+    def test_account_delete_accepts_correct_password(self):
+        with app._db_connect() as conn:
+            conn.execute(
+                "INSERT INTO users(username, email, password_hash) VALUES(?, ?, ?)",
+                ("deluser2", "del2@example.com", app.generate_password_hash("goodpass123")),
+            )
+            conn.commit()
+            row = conn.execute("SELECT id FROM users WHERE username = ?", ("deluser2",)).fetchone()
+            user_id = int(row["id"])
+
+        with self.client.session_transaction() as sess:
+            sess["user_id"] = user_id
+            sess["auth_boot_token"] = app.APP_BOOT_TOKEN
+
+        response = self.client.post(
+            "/account/delete",
+            data={"confirm_password": "goodpass123"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers.get("Location"), "/")
+
+        with app._db_connect() as conn:
+            row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        self.assertIsNone(row)
+
 
 class HelperTests(unittest.TestCase):
     def test_is_safe_next_url(self):
