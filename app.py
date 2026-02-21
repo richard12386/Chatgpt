@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import csv
 import hmac
 import io
+import json
 import math
 import os
 import random
@@ -17,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from functools import wraps
 from threading import Event, Lock, Thread
-from typing import Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
 import requests
@@ -53,7 +54,13 @@ WEEK_THRESHOLD_OPTIONS = [3, 5, 8, 13, 21, 34, 55]
 THRESHOLD_OPTIONS = WEEK_THRESHOLD_OPTIONS
 GRANULARITY_OPTIONS = [("week", "Week End"), ("day", "Every Day")]
 CACHE_TTL_SECONDS = 900
-STALE_CACHE_MAX_AGE_SECONDS = 21600
+STABILITY_STALE_TTL_SECONDS = 86400
+STALE_CACHE_MAX_AGE_SECONDS = STABILITY_STALE_TTL_SECONDS
+MARKET_FRESH_TTL_SECONDS = 300
+ANALYSIS_VIEW_FRESH_TTL_SECONDS = 900
+CRYPTO_CHART_FRESH_TTL_SECONDS = 300
+BACKTEST_FRESH_TTL_SECONDS = 900
+FETCH_FAILURE_COOLDOWN_SECONDS = 20
 SEARCH_CACHE_TTL_SECONDS = 43200
 AUTO_REFRESH_INTERVAL_SECONDS = 60
 MAX_RECENT_SEARCHES = 4
@@ -72,6 +79,14 @@ LISTINGS_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
 RECENT_SEARCHES: deque[dict[str, str]] = deque(maxlen=MAX_RECENT_SEARCHES)
 SEARCH_HISTORY: deque[dict[str, str]] = deque(maxlen=MAX_SEARCH_HISTORY)
 LAST_MARKET_OVERVIEW: Optional[dict] = None
+MARKET_OVERVIEW_CACHE: dict[str, tuple[float, dict, str]] = {}
+CRYPTO_MARKET_OVERVIEW_CACHE: dict[str, tuple[float, dict, str]] = {}
+ANALYSIS_VIEW_CACHE: dict[tuple[str, str, int, str], tuple[float, "AnalysisResult", str]] = {}
+CRYPTO_CHART_CACHE: dict[tuple[str, str], tuple[float, "CryptoChartResult", str]] = {}
+BACKTEST_CACHE: dict[tuple[str, str, str, int, int, float], tuple[float, "BacktestResult", str]] = {}
+FETCH_FAILURE_COOLDOWN: dict[str, float] = {}
+FETCH_LAST_REASON: dict[str, str] = {}
+FETCH_STATUS_COUNTS: dict[str, int] = {"fresh": 0, "stale": 0, "unavailable": 0}
 AUTO_REFRESH_STOP = Event()
 AUTO_REFRESH_LOCK = Lock()
 AUTO_REFRESH_THREAD: Optional[Thread] = None
@@ -226,6 +241,16 @@ class BacktestResult:
     trade_entries: int
     trade_exits: int
     points: list[dict[str, float | str]]
+
+
+@dataclass
+class FetchStatus:
+    status: str
+    reason: str
+    source: str
+    fetched_at: Optional[float]
+    is_stale: bool
+    stale_age_seconds: Optional[int]
 
 
 CRYPTO_RANGE_OPTIONS = [
@@ -544,6 +569,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS symbol_cache (
                 query_key TEXT PRIMARY KEY,
                 symbol TEXT NOT NULL,
+                updated_ts REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS data_snapshots (
+                cache_key TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                reason TEXT NOT NULL,
                 updated_ts REAL NOT NULL
             );
 
@@ -1261,6 +1294,189 @@ def _request_json_with_retry(url: str, params: dict, retries: int = 4, timeout: 
             time.sleep(delay + random.uniform(0.0, 0.3))
             delay *= 1.8
     raise RuntimeError("Yahoo endpoint request failed.") from last_exc
+
+
+def _reason_from_exception(exc: Exception) -> str:
+    if isinstance(exc, YFRateLimitError):
+        return "RATE_LIMIT"
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "NETWORK"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return "NETWORK"
+    if isinstance(exc, requests.exceptions.HTTPError):
+        response = getattr(exc, "response", None)
+        if response is not None and getattr(response, "status_code", 0) >= 500:
+            return "UPSTREAM_5XX"
+        return "NETWORK"
+    if isinstance(exc, ValueError):
+        return "NO_DATA"
+    return "PARSE_ERROR"
+
+
+def _record_fetch_status(status: str, reason: str):
+    FETCH_STATUS_COUNTS[status] = FETCH_STATUS_COUNTS.get(status, 0) + 1
+    app.logger.info("fetch_status=%s reason=%s", status, reason)
+
+
+def _format_fetch_meta(meta: FetchStatus) -> dict[str, str | bool]:
+    label = "Live" if meta.status == "fresh" else ("Stale cache" if meta.status == "stale" else "Unavailable")
+    updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(meta.fetched_at)) if meta.fetched_at else "N/A"
+    return {
+        "status": meta.status,
+        "reason": meta.reason,
+        "source": meta.source,
+        "last_updated": updated,
+        "is_stale": meta.is_stale,
+        "label": label,
+    }
+
+
+def _snapshot_get(cache_key: str) -> Optional[tuple[float, Any, str, str]]:
+    with _db_connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json, source, reason, updated_ts FROM data_snapshots WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        payload = json.loads(str(row["payload_json"]))
+        return float(row["updated_ts"]), payload, str(row["source"]), str(row["reason"])
+    except Exception:
+        return None
+
+
+def _snapshot_set(cache_key: str, payload: Any, source: str, reason: str, updated_ts: float):
+    try:
+        payload_json = json.dumps(payload)
+    except Exception:
+        return
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO data_snapshots(cache_key, payload_json, source, reason, updated_ts)
+            VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                payload_json=excluded.payload_json,
+                source=excluded.source,
+                reason=excluded.reason,
+                updated_ts=excluded.updated_ts
+            """,
+            (cache_key, payload_json, source, reason, updated_ts),
+        )
+        conn.commit()
+
+
+def _resilient_fetch(
+    *,
+    cache_store: dict,
+    cache_key: Any,
+    fetcher: Callable[[], tuple[Any, str]],
+    validator: Callable[[Any], bool],
+    fresh_ttl_seconds: int,
+    stale_ttl_seconds: int = STABILITY_STALE_TTL_SECONDS,
+    snapshot_key: Optional[str] = None,
+    failure_scope: str = "default",
+) -> tuple[Optional[Any], FetchStatus]:
+    now = time.time()
+    cached = cache_store.get(cache_key)
+    if cached:
+        cached_at, cached_data, cached_source = cached
+        if now - cached_at <= fresh_ttl_seconds:
+            meta = FetchStatus(
+                status="fresh",
+                reason="OK",
+                source=f"{cached_source} (cache)",
+                fetched_at=float(cached_at),
+                is_stale=False,
+                stale_age_seconds=0,
+            )
+            _record_fetch_status(meta.status, meta.reason)
+            return cached_data, meta
+
+    cooldown_key = f"{failure_scope}:{cache_key}"
+    cooldown_until = FETCH_FAILURE_COOLDOWN.get(cooldown_key, 0.0)
+    if now < cooldown_until and cached:
+        cached_at, cached_data, cached_source = cached
+        age = int(now - cached_at)
+        if age <= stale_ttl_seconds:
+            reason = FETCH_LAST_REASON.get(cooldown_key, "RATE_LIMIT")
+            meta = FetchStatus(
+                status="stale",
+                reason=reason,
+                source=f"{cached_source} (cooldown cache)",
+                fetched_at=float(cached_at),
+                is_stale=True,
+                stale_age_seconds=age,
+            )
+            _record_fetch_status(meta.status, meta.reason)
+            return cached_data, meta
+
+    try:
+        data, source = fetcher()
+        if not validator(data):
+            raise ValueError("empty payload")
+        cache_store[cache_key] = (now, data, source)
+        if snapshot_key:
+            _snapshot_set(snapshot_key, data, source, "OK", now)
+        meta = FetchStatus(
+            status="fresh",
+            reason="OK",
+            source=source,
+            fetched_at=now,
+            is_stale=False,
+            stale_age_seconds=0,
+        )
+        _record_fetch_status(meta.status, meta.reason)
+        return data, meta
+    except Exception as exc:
+        reason = _reason_from_exception(exc)
+        FETCH_LAST_REASON[cooldown_key] = reason
+        FETCH_FAILURE_COOLDOWN[cooldown_key] = now + FETCH_FAILURE_COOLDOWN_SECONDS
+
+        if cached:
+            cached_at, cached_data, cached_source = cached
+            age = int(now - cached_at)
+            if age <= stale_ttl_seconds:
+                meta = FetchStatus(
+                    status="stale",
+                    reason=reason,
+                    source=f"{cached_source} (stale cache)",
+                    fetched_at=float(cached_at),
+                    is_stale=True,
+                    stale_age_seconds=age,
+                )
+                _record_fetch_status(meta.status, meta.reason)
+                return cached_data, meta
+
+        if snapshot_key:
+            snap = _snapshot_get(snapshot_key)
+            if snap:
+                snap_at, snap_data, snap_source, snap_reason = snap
+                age = int(now - snap_at)
+                if age <= stale_ttl_seconds and validator(snap_data):
+                    cache_store[cache_key] = (snap_at, snap_data, snap_source)
+                    meta = FetchStatus(
+                        status="stale",
+                        reason=snap_reason if snap_reason != "OK" else reason,
+                        source=f"{snap_source} (snapshot)",
+                        fetched_at=snap_at,
+                        is_stale=True,
+                        stale_age_seconds=age,
+                    )
+                    _record_fetch_status(meta.status, meta.reason)
+                    return snap_data, meta
+
+        meta = FetchStatus(
+            status="unavailable",
+            reason=reason,
+            source="none",
+            fetched_at=None,
+            is_stale=False,
+            stale_age_seconds=None,
+        )
+        _record_fetch_status(meta.status, meta.reason)
+        return None, meta
 
 
 def _search_symbol_by_name_http(query: str) -> str:
@@ -2591,6 +2807,197 @@ def _analyze_input(
     return result
 
 
+def _non_empty_market(overview: Any) -> bool:
+    if not isinstance(overview, dict):
+        return False
+    keys = ("active_buys", "active_sells", "gainers", "losers", "recommendations")
+    return any(bool(overview.get(k)) for k in keys)
+
+
+def _fetch_analysis_live(
+    input_value: str,
+    period: str,
+    threshold_pct: int,
+    granularity: str,
+) -> tuple[AnalysisResult, str]:
+    try:
+        return (
+            _analyze_input(
+                input_value,
+                period=period,
+                threshold_pct=threshold_pct,
+                granularity=granularity,
+            ),
+            "yfinance",
+        )
+    except YFRateLimitError:
+        resolved = _search_symbol_by_name_http(input_value) if not _is_probable_ticker(input_value) else input_value
+        return (
+            get_stock_analysis_http(
+                ticker_symbol=str(resolved).upper(),
+                period=period,
+                threshold_pct=threshold_pct,
+                granularity=granularity,
+            ),
+            "yahoo_http",
+        )
+
+
+def get_stock_analysis_resilient(
+    input_value: str,
+    period: str,
+    threshold_pct: int,
+    granularity: str,
+) -> tuple[Optional[AnalysisResult], FetchStatus]:
+    cache_key = (input_value.strip().upper(), period, threshold_pct, granularity)
+
+    def fetcher() -> tuple[Any, str]:
+        return _fetch_analysis_live(input_value, period, threshold_pct, granularity)
+
+    data, meta = _resilient_fetch(
+        cache_store=ANALYSIS_VIEW_CACHE,
+        cache_key=cache_key,
+        fetcher=fetcher,
+        validator=lambda x: isinstance(x, AnalysisResult),
+        fresh_ttl_seconds=ANALYSIS_VIEW_FRESH_TTL_SECONDS,
+        stale_ttl_seconds=STABILITY_STALE_TTL_SECONDS,
+        snapshot_key=None,
+        failure_scope="stocks",
+    )
+    return data if isinstance(data, AnalysisResult) else None, meta
+
+
+def get_crypto_chart_resilient(input_value: str, selected_range: str) -> tuple[Optional[CryptoChartResult], FetchStatus]:
+    def fetcher() -> tuple[Any, str]:
+        base_symbol, coin_name = _resolve_crypto_input(input_value)
+        points, current_price, change_pct = _fetch_crypto_chart_yahoo(base_symbol, selected_range)
+        if not points:
+            raise ValueError("No data")
+        summary = get_crypto_price_summary(base_symbol)
+        display_price = summary.price_usd if summary.price_usd is not None else current_price
+        result = CryptoChartResult(
+            symbol=base_symbol,
+            display_symbol=f"{base_symbol}/USD",
+            name=coin_name,
+            selected_range=selected_range,
+            current_price_usd=display_price,
+            change_pct=change_pct,
+            points=points,
+            as_of=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        return result, "yahoo+multi"
+
+    cache_key = (input_value.strip().upper(), selected_range)
+    data, meta = _resilient_fetch(
+        cache_store=CRYPTO_CHART_CACHE,
+        cache_key=cache_key,
+        fetcher=fetcher,
+        validator=lambda x: isinstance(x, CryptoChartResult) and bool(x.points),
+        fresh_ttl_seconds=CRYPTO_CHART_FRESH_TTL_SECONDS,
+        stale_ttl_seconds=STABILITY_STALE_TTL_SECONDS,
+        snapshot_key=None,
+        failure_scope="crypto_chart",
+    )
+    return data if isinstance(data, CryptoChartResult) else None, meta
+
+
+def get_market_overview_resilient() -> tuple[dict, FetchStatus]:
+    data, meta = _resilient_fetch(
+        cache_store=MARKET_OVERVIEW_CACHE,
+        cache_key="stocks_markets",
+        fetcher=lambda: (get_market_overview_live(), "yahoo+finviz+tradingview+google"),
+        validator=_non_empty_market,
+        fresh_ttl_seconds=MARKET_FRESH_TTL_SECONDS,
+        stale_ttl_seconds=STABILITY_STALE_TTL_SECONDS,
+        snapshot_key="markets:stocks",
+        failure_scope="stocks_markets",
+    )
+    if data is None:
+        data = {
+            "active_buys": [],
+            "active_sells": [],
+            "gainers": [],
+            "losers": [],
+            "recommendations": [],
+        }
+    return data, meta
+
+
+def get_crypto_market_overview_resilient() -> tuple[dict, FetchStatus]:
+    data, meta = _resilient_fetch(
+        cache_store=CRYPTO_MARKET_OVERVIEW_CACHE,
+        cache_key="crypto_markets",
+        fetcher=lambda: (get_crypto_market_overview_live(), "coingecko+binance"),
+        validator=_non_empty_market,
+        fresh_ttl_seconds=MARKET_FRESH_TTL_SECONDS,
+        stale_ttl_seconds=STABILITY_STALE_TTL_SECONDS,
+        snapshot_key="markets:crypto",
+        failure_scope="crypto_markets",
+    )
+    if data is None:
+        data = {
+            "active_buys": [],
+            "active_sells": [],
+            "gainers": [],
+            "losers": [],
+            "recommendations": [],
+        }
+    return data, meta
+
+
+def get_backtest_resilient(
+    input_value: str,
+    period: str,
+    fast_window: int,
+    slow_window: int,
+    initial_capital: float,
+    crypto_mode: bool = False,
+) -> tuple[Optional[BacktestResult], FetchStatus]:
+    cache_key = (
+        "crypto" if crypto_mode else "stock",
+        input_value.strip().upper(),
+        period,
+        fast_window,
+        slow_window,
+        round(initial_capital, 2),
+    )
+
+    def fetcher() -> tuple[Any, str]:
+        if crypto_mode:
+            return (
+                get_crypto_backtest_result(
+                    input_value=input_value,
+                    period=period,
+                    fast_window=fast_window,
+                    slow_window=slow_window,
+                    initial_capital=initial_capital,
+                ),
+                "yfinance",
+            )
+        return (
+            get_backtest_result(
+                input_value=input_value,
+                period=period,
+                fast_window=fast_window,
+                slow_window=slow_window,
+                initial_capital=initial_capital,
+            ),
+            "yfinance",
+        )
+
+    data, meta = _resilient_fetch(
+        cache_store=BACKTEST_CACHE,
+        cache_key=cache_key,
+        fetcher=fetcher,
+        validator=lambda x: isinstance(x, BacktestResult) and bool(x.points),
+        fresh_ttl_seconds=BACKTEST_FRESH_TTL_SECONDS,
+        stale_ttl_seconds=STABILITY_STALE_TTL_SECONDS,
+        snapshot_key=None,
+        failure_scope="crypto_backtest" if crypto_mode else "stocks_backtest",
+    )
+    return data if isinstance(data, BacktestResult) else None, meta
+
+
 def _export_csv_response(result: AnalysisResult, query: str) -> tuple[str, int]:
     csv_buffer = io.StringIO()
     writer = csv.writer(csv_buffer)
@@ -2920,6 +3327,7 @@ def backtest():
     initial_capital = 10000.0
     result: Optional[BacktestResult] = None
     error: Optional[str] = None
+    result_meta: Optional[dict[str, str | bool]] = None
     current_user = _get_current_user()
 
     if request.method == "POST":
@@ -2932,19 +3340,16 @@ def backtest():
         if not input_value:
             error = "Please enter a ticker symbol or company name."
         else:
-            try:
-                result = get_backtest_result(
-                    input_value=input_value,
-                    period=selected_period,
-                    fast_window=fast_window,
-                    slow_window=slow_window,
-                    initial_capital=initial_capital,
-                )
-            except ValueError as exc:
-                error = str(exc)
-            except Exception:
-                app.logger.exception("Backtest failed for input: %s", input_value)
-                error = "Could not run backtest right now. Please try again."
+            result, meta = get_backtest_resilient(
+                input_value=input_value,
+                period=selected_period,
+                fast_window=fast_window,
+                slow_window=slow_window,
+                initial_capital=initial_capital,
+            )
+            result_meta = _format_fetch_meta(meta)
+            if meta.status == "unavailable":
+                error = "Data could not be loaded right now. Please try again shortly."
 
     return render_template(
         "backtest.html",
@@ -2956,6 +3361,7 @@ def backtest():
         slow_window=slow_window,
         initial_capital=initial_capital,
         result=result,
+        result_meta=result_meta,
         error=error,
     )
 
@@ -2969,6 +3375,7 @@ def crypto_backtest():
     initial_capital = 10000.0
     result: Optional[BacktestResult] = None
     error: Optional[str] = None
+    result_meta: Optional[dict[str, str | bool]] = None
     current_user = _get_current_user()
 
     if request.method == "POST":
@@ -2981,19 +3388,17 @@ def crypto_backtest():
         if not input_value:
             error = "Please enter a crypto symbol or coin name."
         else:
-            try:
-                result = get_crypto_backtest_result(
-                    input_value=input_value,
-                    period=selected_period,
-                    fast_window=fast_window,
-                    slow_window=slow_window,
-                    initial_capital=initial_capital,
-                )
-            except ValueError as exc:
-                error = str(exc)
-            except Exception:
-                app.logger.exception("Crypto backtest failed for input: %s", input_value)
-                error = "Could not run crypto backtest right now. Please try again."
+            result, meta = get_backtest_resilient(
+                input_value=input_value,
+                period=selected_period,
+                fast_window=fast_window,
+                slow_window=slow_window,
+                initial_capital=initial_capital,
+                crypto_mode=True,
+            )
+            result_meta = _format_fetch_meta(meta)
+            if meta.status == "unavailable":
+                error = "Data could not be loaded right now. Please try again shortly."
 
     return render_template(
         "crypto_backtest.html",
@@ -3005,6 +3410,7 @@ def crypto_backtest():
         slow_window=slow_window,
         initial_capital=initial_capital,
         result=result,
+        result_meta=result_meta,
         error=error,
     )
 
@@ -3013,6 +3419,7 @@ def crypto_backtest():
 def index():
     result: Optional[AnalysisResult] = None
     error: Optional[str] = None
+    result_meta: Optional[dict[str, str | bool]] = None
     current_user = _get_current_user()
     watchlist: list[str] = _watchlist_symbols(int(current_user["id"])) if current_user else []
     exchange_listings: list[dict[str, str]] = []
@@ -3038,42 +3445,15 @@ def index():
         )
 
     if input_value:
-        try:
-            result = _analyze_input(
-                input_value,
-                period=selected_period,
-                threshold_pct=selected_threshold,
-                granularity=selected_granularity,
-            )
-        except YFRateLimitError:
-            # Extra fallback path when yfinance is throttled.
-            try:
-                result = get_stock_analysis_http(
-                    ticker_symbol=input_value.upper(),
-                    period=selected_period,
-                    threshold_pct=selected_threshold,
-                    granularity=selected_granularity,
-                )
-            except Exception:
-                try:
-                    resolved = _search_symbol_by_name_http(input_value)
-                    result = get_stock_analysis_http(
-                        ticker_symbol=resolved,
-                        period=selected_period,
-                        threshold_pct=selected_threshold,
-                        granularity=selected_granularity,
-                    )
-                except Exception:
-                    fallback_result = _latest_cached_result()
-                    if fallback_result is not None:
-                        result = fallback_result
-                    else:
-                        error = "Could not refresh data right now. Try another symbol or range."
-        except ValueError as exc:
-            error = str(exc)
-        except Exception:
-            app.logger.exception("Unexpected error while analyzing input: %s", input_value)
-            error = "Could not analyze this input right now. Please try again."
+        result, meta = get_stock_analysis_resilient(
+            input_value=input_value,
+            period=selected_period,
+            threshold_pct=selected_threshold,
+            granularity=selected_granularity,
+        )
+        result_meta = _format_fetch_meta(meta)
+        if meta.status == "unavailable":
+            error = "Data could not be loaded right now. Please try again shortly."
     elif request.method == "POST":
         error = "Please enter a ticker symbol or company name."
 
@@ -3099,6 +3479,7 @@ def index():
         granularity_options=GRANULARITY_OPTIONS,
         selected_granularity=selected_granularity,
         input_value=input_value,
+        result_meta=result_meta,
         recent_searches=list(RECENT_SEARCHES),
         search_history=list(SEARCH_HISTORY),
         exchange_listings=exchange_listings,
@@ -3111,6 +3492,7 @@ def crypto():
     input_value = ""
     result: Optional[CryptoChartResult] = None
     error: Optional[str] = None
+    result_meta: Optional[dict[str, str | bool]] = None
     selected_range = "24h"
     log_scale = "0"
 
@@ -3124,28 +3506,10 @@ def crypto():
         log_scale = "1" if request.args.get("log_scale") == "1" else "0"
 
     if input_value:
-        try:
-            base_symbol, coin_name = _resolve_crypto_input(input_value)
-            points, current_price, change_pct = _fetch_crypto_chart_yahoo(base_symbol, selected_range)
-            if not points:
-                raise ValueError("Could not load chart data for this coin right now.")
-            summary = get_crypto_price_summary(base_symbol)
-            display_price = summary.price_usd if summary.price_usd is not None else current_price
-            result = CryptoChartResult(
-                symbol=base_symbol,
-                display_symbol=f"{base_symbol}/USD",
-                name=coin_name,
-                selected_range=selected_range,
-                current_price_usd=display_price,
-                change_pct=change_pct,
-                points=points,
-                as_of=time.strftime("%Y-%m-%d %H:%M:%S"),
-            )
-        except ValueError as exc:
-            error = str(exc)
-        except Exception:
-            app.logger.exception("Unexpected crypto lookup error: %s", input_value)
-            error = "Could not load crypto chart right now. Please try again."
+        result, meta = get_crypto_chart_resilient(input_value=input_value, selected_range=selected_range)
+        result_meta = _format_fetch_meta(meta)
+        if meta.status == "unavailable":
+            error = "Data could not be loaded right now. Please try again shortly."
     elif request.method == "POST":
         error = "Please enter a crypto symbol."
 
@@ -3157,21 +3521,27 @@ def crypto():
         range_options=CRYPTO_RANGE_OPTIONS,
         log_scale=log_scale,
         result=result,
+        result_meta=result_meta,
         error=error,
     )
 
 
 @app.get("/crypto/markets")
 def crypto_markets():
-    market = get_crypto_market_overview_live()
+    market, market_meta = get_crypto_market_overview_resilient()
     current_user = _get_current_user()
-    return render_template("crypto_markets.html", market=market, current_user=current_user)
+    return render_template(
+        "crypto_markets.html",
+        market=market,
+        market_meta=_format_fetch_meta(market_meta),
+        current_user=current_user,
+    )
 
 
 @app.get("/markets")
 def markets():
-    market = get_market_overview_live()
-    return render_template("markets.html", market=market)
+    market, market_meta = get_market_overview_resilient()
+    return render_template("markets.html", market=market, market_meta=_format_fetch_meta(market_meta))
 
 
 @app.get("/export.csv")
@@ -3211,6 +3581,7 @@ def health():
         cache_entries=len(ANALYSIS_CACHE),
         recent_searches=len(RECENT_SEARCHES),
         search_history=len(SEARCH_HISTORY),
+        fetch_status_counts=FETCH_STATUS_COUNTS,
         auto_refresh_running=bool(AUTO_REFRESH_THREAD and AUTO_REFRESH_THREAD.is_alive()),
         auto_refresh_interval_seconds=AUTO_REFRESH_INTERVAL_SECONDS,
         auto_refresh_last_run_at=int(AUTO_REFRESH_LAST_RUN_AT) if AUTO_REFRESH_LAST_RUN_AT else None,

@@ -168,6 +168,9 @@
     <section class="results">
       <article class="panel">
         <h2>{{ result.symbol }} | {{ result.period }} | {{ result.fast_window }}/{{ result.slow_window }} SMA</h2>
+        {% if result_meta %}
+          <p class="hover-readout">Source: {{ result_meta.source }} | Last updated: {{ result_meta.last_updated }} | {{ result_meta.label }}</p>
+        {% endif %}
         <div class="stat-grid">
           <div class="stat"><span class="k">Final Equity</span><span class="v">{{ "%.2f"|format(result.final_equity) }}</span></div>
           <div class="stat"><span class="k">Buy & Hold</span><span class="v">{{ "%.2f"|format(result.buy_hold_final) }}</span></div>

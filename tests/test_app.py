@@ -1,7 +1,9 @@
 import unittest
 import re
+import time
 from unittest.mock import Mock, patch
 
+import requests
 from yfinance.exceptions import YFRateLimitError
 
 import app
@@ -468,26 +470,60 @@ class RouteTests(unittest.TestCase):
         summary_mock.assert_called_once_with("BTC")
 
     @patch("app._analyze_input")
-    @patch("app._latest_cached_result")
-    @patch("app.get_stock_analysis_http")
-    @patch("app._search_symbol_by_name_http")
-    def test_rate_limit_without_fallback_shows_error(
-        self,
-        search_http_mock: Mock,
-        analysis_http_mock: Mock,
-        latest_cached_mock: Mock,
-        analyze_mock: Mock,
-    ):
+    @patch("app.get_stock_analysis_resilient")
+    def test_rate_limit_without_fallback_shows_error(self, resilient_mock: Mock, analyze_mock: Mock):
+        resilient_mock.return_value = (
+            None,
+            app.FetchStatus(
+                status="unavailable",
+                reason="RATE_LIMIT",
+                source="none",
+                fetched_at=None,
+                is_stale=False,
+                stale_age_seconds=None,
+            ),
+        )
         analyze_mock.side_effect = YFRateLimitError()
-        latest_cached_mock.return_value = None
-        analysis_http_mock.side_effect = RuntimeError("fallback failed")
-        search_http_mock.side_effect = RuntimeError("search failed")
 
         response = self.client.post("/", data={"ticker": "AAPL", "period": "2y", "threshold": "5"})
         body = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Could not refresh data right now. Try another symbol or range.", body)
+        self.assertIn("Data could not be loaded right now. Please try again shortly.", body)
+
+    @patch("app.get_stock_analysis_resilient")
+    def test_stale_stock_result_shows_stale_warning(self, resilient_mock: Mock):
+        resilient_mock.return_value = (
+            app.AnalysisResult(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                company_state="CA",
+                currency="USD",
+                exchange="NMS",
+                current_price=123.45,
+                last_dividend=0.25,
+                last_dividend_date="2026-01-15",
+                threshold_pct=5,
+                volatile_weeks=[],
+                weekly_price_points=[],
+                volatility_week_count=0,
+                max_weekly_gain_pct=None,
+                max_weekly_loss_pct=None,
+                granularity="week",
+            ),
+            app.FetchStatus(
+                status="stale",
+                reason="RATE_LIMIT",
+                source="yfinance (stale cache)",
+                fetched_at=1700000000.0,
+                is_stale=True,
+                stale_age_seconds=1200,
+            ),
+        )
+        response = self.client.post("/", data={"ticker": "AAPL", "period": "1y", "threshold": "5"})
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Showing cached data.", body)
 
     @patch("app._analyze_input")
     def test_export_csv_missing_query_returns_400(self, analyze_mock: Mock):
@@ -535,6 +571,33 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(app._normalize_symbol(" aa-pl "), "AA-PL")
         self.assertEqual(app._normalize_crypto_symbol("btc-usdt"), "BTC")
         self.assertEqual(app._alert_symbol("crypto", "ethusdt"), "ETH")
+
+    def test_reason_mapping_rate_limit(self):
+        reason = app._reason_from_exception(YFRateLimitError())
+        self.assertEqual(reason, "RATE_LIMIT")
+
+    def test_resilient_fetch_returns_stale_when_live_fails(self):
+        cache_store = {
+            "k": (time.time() - 30, {"ok": True}, "cached-source"),
+        }
+
+        def failing_fetcher():
+            raise requests.exceptions.Timeout()
+
+        data, meta = app._resilient_fetch(
+            cache_store=cache_store,
+            cache_key="k",
+            fetcher=failing_fetcher,
+            validator=lambda x: bool(x),
+            fresh_ttl_seconds=1,
+            stale_ttl_seconds=86400,
+            snapshot_key=None,
+            failure_scope="unit-test",
+        )
+
+        self.assertEqual(data, {"ok": True})
+        self.assertEqual(meta.status, "stale")
+        self.assertTrue(meta.is_stale)
 
 
 if __name__ == "__main__":

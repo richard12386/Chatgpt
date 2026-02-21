@@ -134,6 +134,9 @@
     </nav>
     <a class="back" href="/">&larr; Back to homepage</a>
     <h1>Markets</h1>
+    {% if market_meta %}
+      <p class="back">Source: {{ market_meta.source }} | Last updated: {{ market_meta.last_updated }} | {{ market_meta.label }}</p>
+    {% endif %}
 
     <section class="market-board">
       <article class="market-card">

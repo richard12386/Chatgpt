@@ -185,6 +185,9 @@
     </nav>
     <a class="back" href="/crypto">&larr; Back to crypto hub</a>
     <h1>Crypto Markets</h1>
+    {% if market_meta %}
+      <p class="back">Source: {{ market_meta.source }} | Last updated: {{ market_meta.last_updated }} | {{ market_meta.label }}</p>
+    {% endif %}
 
     <section class="market-board">
       <article class="market-card">

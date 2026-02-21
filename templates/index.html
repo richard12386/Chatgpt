@@ -282,6 +282,22 @@
       padding: 0.75rem;
       background: #fff;
     }
+    .data-meta {
+      margin: 0.3rem 0 0.65rem;
+      color: #475569;
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+    .soft-warning {
+      margin: 0.45rem 0 0.75rem;
+      color: #92400e;
+      background: #fef3c7;
+      border: 1px solid #fcd34d;
+      border-radius: 10px;
+      padding: 0.5rem 0.7rem;
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
     .exchange-panel {
       margin-top: 0.9rem;
       background: #fff;
@@ -582,6 +598,12 @@
     <section class="results">
       <div class="card">
         <h2 class="ticker">{{ result.ticker }} <span class="pill">{{ selected_period }} | {{ selected_granularity }} | {{ result.threshold_pct }}%</span></h2>
+        {% if result_meta %}
+          <p class="data-meta">Source: {{ result_meta.source }} | Last updated: {{ result_meta.last_updated }} | {{ result_meta.label }}</p>
+          {% if result_meta.is_stale %}
+            <p class="soft-warning">Live provider is temporarily unavailable. Showing cached data.</p>
+          {% endif %}
+        {% endif %}
         <div class="stat-grid">
           <div class="stat"><span class="k">Company Name</span><span class="v">{{ result.company_name or "Not available" }}</span></div>
           <div class="stat"><span class="k">Country / State</span><span class="v">{{ result.company_state or "N/A" }}</span></div>
