@@ -164,6 +164,12 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
         self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
         self.assertIsNotNone(response.headers.get("Content-Security-Policy"))
+        self.assertIsNotNone(response.headers.get("X-Request-ID"))
+
+    def test_request_id_echoes_when_sent(self):
+        response = self.client.get("/", headers={"X-Request-ID": "risa-test-123"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("X-Request-ID"), "risa-test-123")
 
     def test_register_creates_user_and_redirects_home(self):
         response = self.client.post(

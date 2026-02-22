@@ -6,6 +6,7 @@ import csv
 import hmac
 import io
 import json
+import logging
 import math
 import os
 import random
@@ -24,7 +25,7 @@ from urllib.parse import urlparse
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
-from flask import Flask, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Flask, g, has_request_context, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from yfinance.exceptions import YFRateLimitError
 
@@ -38,6 +39,39 @@ app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 app.permanent_session_lifetime = timedelta(hours=12)
 APP_BOOT_TOKEN = os.getenv("AUTH_BOOT_TOKEN", app.config["SECRET_KEY"])
 DB_PATH = os.path.join(os.path.dirname(__file__), "app.db")
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = "-"
+        record.method = "-"
+        record.path = "-"
+        if has_request_context():
+            record.request_id = str(getattr(g, "request_id", "-"))
+            record.method = request.method
+            record.path = request.path
+        return True
+
+
+def _configure_logging():
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s [request_id=%(request_id)s] %(method)s %(path)s :: %(message)s"
+    )
+    request_filter = RequestIdFilter()
+
+    target_logger = app.logger
+    if not target_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        handler.addFilter(request_filter)
+        target_logger.addHandler(handler)
+    else:
+        for handler in target_logger.handlers:
+            handler.setFormatter(formatter)
+            handler.addFilter(request_filter)
+
+
+_configure_logging()
 
 PERIOD_OPTIONS = [
     ("1d", "1D"),
@@ -1179,6 +1213,9 @@ def _inject_template_security():
 
 @app.before_request
 def _security_checks():
+    incoming_id = (request.headers.get("X-Request-ID", "") or "").strip()
+    g.request_id = incoming_id if incoming_id else secrets.token_hex(8)
+
     if request.method != "POST":
         return None
 
@@ -1202,6 +1239,7 @@ def _security_checks():
 
 @app.after_request
 def _set_security_headers(response):
+    response.headers["X-Request-ID"] = str(getattr(g, "request_id", "-"))
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -1220,6 +1258,7 @@ def _set_security_headers(response):
     )
     if request.is_secure:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    app.logger.info("response_status=%s", response.status_code)
     return response
 
 
