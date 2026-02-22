@@ -36,7 +36,7 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("FLASK_SECURE_COOKIE", "0") == "1"
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 app.permanent_session_lifetime = timedelta(hours=12)
-APP_BOOT_TOKEN = secrets.token_urlsafe(16)
+APP_BOOT_TOKEN = os.getenv("AUTH_BOOT_TOKEN", app.config["SECRET_KEY"])
 DB_PATH = os.path.join(os.path.dirname(__file__), "app.db")
 
 PERIOD_OPTIONS = [
